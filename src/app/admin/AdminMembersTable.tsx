@@ -32,7 +32,7 @@ type BookingIssueRow = {
   phone: string | null;
 };
 
-function fmt(ts?: string | null) {
+function fmt(v: string | null | undefined) {
   if (!ts) return "";
   try {
     return new Date(ts).toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
