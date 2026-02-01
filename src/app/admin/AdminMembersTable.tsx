@@ -410,7 +410,7 @@ export default function AdminMembersTable({ members }: { members: MemberRow[] })
                   <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{m.phone ?? ""}</td>
                   <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{m.credits}</td>
 		  <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{m.purchase_count ?? 0}</td>
-		  <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{fmt(m.last_purchase_at)}</td>
+		  <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{fmt(m.last_purchase_at ?? null)}</td>
                   <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{m.waiver_status}</td>
                   <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{fmt(m.waiver_sent_at)}</td>
                   <td style={{ padding: "10px 8px", borderBottom: "1px solid #eee" }}>{fmt(m.waiver_signed_at)}</td>
