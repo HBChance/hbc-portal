@@ -20,36 +20,40 @@ function json(status: number, body: unknown) {
 }
 
 // Defensive “completed” detection across possible SignNow payload variants.
-function isSignNowDocCompleted(doc: any): { completed: boolean; signedAt?: string } {
-  const status = String(doc?.status ?? "").toLowerCase();
-  const completedAt =
-    doc?.completed_at ??
-    doc?.completedAt ??
-    doc?.signed_at ??
-    doc?.signedAt ??
-    doc?.updated_at ??
-    doc?.updatedAt;
+function looksSigned(doc: any): boolean {
+  const status = (doc?.status ?? "").toString().toLowerCase();
+  const documentStatus = (doc?.document_status ?? "").toString().toLowerCase();
+  const signingStatus = (doc?.signing_status ?? "").toString().toLowerCase();
 
-  if (status === "completed" || status === "signed") {
-    return { completed: true, signedAt: completedAt ? new Date(completedAt).toISOString() : undefined };
+  if (status === "completed" || status === "signed") return true;
+  if (documentStatus === "completed" || documentStatus === "signed") return true;
+  if (signingStatus === "completed" || signingStatus === "signed") return true;
+  if (doc?.is_completed === true) return true;
+
+  // Some SignNow payloads track completion per-invite
+  // In your real payload, invite status is "fulfilled" when the signer is done.
+  if (Array.isArray(doc?.field_invites) && doc.field_invites.length > 0) {
+    const allDone = doc.field_invites.every((i: any) =>
+      ["fulfilled", "completed", "signed"].includes(
+        ((i?.status ?? "") as string).toLowerCase()
+      )
+    );
+    if (allDone) return true;
   }
 
-  if (doc?.is_completed === true || doc?.completed === true) {
-    return { completed: true, signedAt: completedAt ? new Date(completedAt).toISOString() : undefined };
+    // Some payloads track signatures separately.
+  // BUT your payload shows signatures[].status can be null even when invites are fulfilled,
+  // so we treat signatures as a "bonus signal", not a requirement.
+  if (Array.isArray(doc?.signatures) && doc.signatures.length > 0) {
+    const anySigDone = doc.signatures.some((s: any) =>
+      ["fulfilled", "completed", "signed"].includes(
+        ((s?.status ?? "") as string).toLowerCase()
+      )
+    );
+    if (anySigDone) return true;
   }
 
-  const signatures = Array.isArray(doc?.signatures) ? doc.signatures : [];
-  if (signatures.length > 0) {
-    const allFulfilled = signatures.every((s: any) => {
-      const sStatus = String(s?.status ?? s?.state ?? "").toLowerCase();
-      return sStatus === "fulfilled" || sStatus === "completed" || sStatus === "signed";
-    });
-    if (allFulfilled) {
-      return { completed: true, signedAt: completedAt ? new Date(completedAt).toISOString() : undefined };
-    }
-  }
-
-  return { completed: false };
+  return false;
 }
 
 serve(async (req) => {
@@ -172,13 +176,13 @@ async function getSignNowAccessToken(): Promise<string> {
           });
           continue;
         }
+                       const doc = await resp.json().catch(() => ({}));
 
-        const doc = await resp.json().catch(() => ({}));
-        const completion = isSignNowDocCompleted(doc);
+        // Robust completion check (works with your "fulfilled" payload)
+        const isSigned = looksSigned(doc);
+        if (!isSigned) continue;
 
-        if (!completion.completed) continue;
-
-        const signedAtIso = completion.signedAt ?? new Date().toISOString();
+        const signedAtIso = new Date().toISOString();
 
         const { data: updated, error: updateErr } = await supabase
           .from("waivers")

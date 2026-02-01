@@ -508,6 +508,33 @@ export default function AdminMembersTable({ members }: { members: MemberRow[] })
                       >
                         Sync signed
                       </button>
+<button
+  type="button"
+  disabled={busyKey === `sendpass:${m.id}`}
+  onClick={() =>
+  action(
+    `sendpass:${m.id}`,
+    async () => {
+      await postJson("/api/admin/booking-pass/send", {
+        member_id: m.id,
+        email: m.email,
+      });
+      window.location.reload();
+    },
+    "Booking link sent."
+  )
+}
+
+  style={{
+    padding: "6px 8px",
+    borderRadius: 8,
+    border: "1px solid #ddd",
+    background: "white",
+    cursor: "pointer",
+  }}
+>
+  Send booking link
+</button>
 
                       {/* Credits */}
                       <button

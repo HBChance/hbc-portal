@@ -273,18 +273,7 @@ export async function POST(req: Request) {
         roleName,
         expirationDays: 30,
       });
-      // If this email belongs to an existing member, attach member_id so /admin recognizes it
-      const { data: memberMatch } = await supabase
-        .from("members")
-        .select("id, first_name, last_name")
-        .eq("email", emailLower)
-        .maybeSingle();
-
-      const recipientName =
-        memberMatch
-          ? [memberMatch.first_name, memberMatch.last_name].filter(Boolean).join(" ").trim() || null
-          : null;
-      // If this email belongs to an existing member, attach member_id so /admin recognizes it
+          // If this email belongs to an existing member, attach member_id so /admin recognizes it
       const { data: memberMatch, error: memMatchErr } = await supabase
         .from("members")
         .select("id, first_name, last_name")
@@ -297,7 +286,10 @@ export async function POST(req: Request) {
 
       const recipientName =
         memberMatch
-          ? [memberMatch.first_name, memberMatch.last_name].filter(Boolean).join(" ").trim() || null
+          ? [memberMatch.first_name, memberMatch.last_name]
+              .filter(Boolean)
+              .join(" ")
+              .trim() || null
           : null;
 
       const nowIso = new Date().toISOString();
@@ -307,15 +299,15 @@ export async function POST(req: Request) {
         .from("waivers")
         .upsert(
           {
-  waiver_year: waiverYear,
-  status: "sent",
-  recipient_email: emailLower,
-  recipient_name: recipientName,
-  external_provider: "signnow",
-  external_document_id: documentId,
-  sent_at: nowIso,
-  member_id: memberMatch?.id ?? null,
-},
+            waiver_year: waiverYear,
+            status: "sent",
+            recipient_email: emailLower,
+            recipient_name: recipientName,
+            external_provider: "signnow",
+            external_document_id: documentId,
+            sent_at: nowIso,
+            member_id: memberMatch?.id ?? null,
+          },
           { onConflict: "recipient_email,waiver_year" }
         );
 

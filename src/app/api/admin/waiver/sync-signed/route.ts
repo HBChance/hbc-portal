@@ -199,9 +199,23 @@ export async function POST(req: Request) {
     .eq("waiver_year", WAIVER_YEAR)
     .maybeSingle();
 
-  if (wErr) return NextResponse.json({ error: wErr.message }, { status: 400 });
-  if (!waiver) return NextResponse.json({ error: "No waiver row found for member/year" }, { status: 404 });
-  if (!waiver.external_document_id) return NextResponse.json({ error: "No external_document_id to sync" }, { status: 400 });
+if (wErr) return NextResponse.json({ ok: false, error: wErr.message }, { status: 400 });
+
+// Normal + expected states should NOT throw in the admin UI.
+// Return 200 OK and mark as ignored (idempotent no-op).
+if (!waiver) {
+  return NextResponse.json(
+    { ok: true, ignored: "no_waiver_row_for_member_year" },
+    { status: 200 }
+  );
+}
+
+if (!waiver.external_document_id) {
+  return NextResponse.json(
+    { ok: true, ignored: "no_external_document_id_to_sync" },
+    { status: 200 }
+  );
+}
 
   // Fetch SignNow doc
   let doc: any;
