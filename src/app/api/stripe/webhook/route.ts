@@ -133,13 +133,54 @@ export async function POST(req: Request) {
         limit: 100,
       });
 
+            // --- credits calculation (live-safe) ---
+      // Priority:
+      // 1) checkout.session.metadata.credits (if Stripe is sending it)
+      // 2) price/product metadata credits (works for Payment Links in live)
+      // 3) fallback to PRICE_TO_CREDITS mapping
+
       let credits = 0;
-      for (const li of lineItems.data) {
-        const priceId = (li.price as any)?.id;
-        const qty = li.quantity ?? 1;
-        const per = priceId ? PRICE_TO_CREDITS[priceId] ?? 0 : 0;
-        credits += per * qty;
+
+      const sessionMetaCreditsRaw = (session.metadata as any)?.credits;
+      const sessionMetaCredits = sessionMetaCreditsRaw ? Number(sessionMetaCreditsRaw) : 0;
+      if (Number.isFinite(sessionMetaCredits) && sessionMetaCredits > 0) {
+        credits = sessionMetaCredits;
+      } else {
+        for (const li of lineItems.data) {
+          const qty = li.quantity ?? 1;
+
+          // Try metadata directly on the expanded price object (if present)
+          const liPrice: any = li.price as any;
+          let per =
+            Number(liPrice?.metadata?.credits ?? 0) ||
+            0;
+
+          // If not on price, try expanding price->product and reading product metadata
+          if (!per) {
+            const priceId = liPrice?.id as string | undefined;
+            if (priceId) {
+              try {
+                const fullPrice: any = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+                per =
+                  Number(fullPrice?.metadata?.credits ?? 0) ||
+                  Number(fullPrice?.product?.metadata?.credits ?? 0) ||
+                  0;
+              } catch {
+                // ignore and fallback
+              }
+            }
+          }
+
+          // Final fallback: your hard-coded mapping
+          if (!per) {
+            const priceId = liPrice?.id as string | undefined;
+            per = priceId ? (PRICE_TO_CREDITS[priceId] ?? 0) : 0;
+          }
+
+          credits += per * qty;
+        }
       }
+      // --- end credits calculation ---
 
       console.log("[stripe] checkout credits computed:", credits);
 
