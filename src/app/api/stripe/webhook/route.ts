@@ -46,25 +46,60 @@ async function markProcessed(eventId: string, eventType: string) {
   });
 }
 
-async function getOrCreateMemberByEmail(email: string) {
-  const norm = email.trim().toLowerCase();
+async function getOrCreateMemberByEmail(opts: {
+  email: string;
+  phone?: string | null;
+  fullName?: string | null;
+}) {
+  const emailNormalized = opts.email.trim().toLowerCase();
 
-  const { data: existing } = await supabaseAdmin
+  // Try existing member
+  const { data: existing, error: existingError } = await supabaseAdmin
     .from("members")
     .select("id,email")
-    .eq("email", norm)
+    .eq("email", emailNormalized)
     .maybeSingle();
 
-  if (existing?.id) return existing;
+  if (existingError) throw existingError;
+  if (existing?.id) return existing.id as string;
 
-  const { data: created, error } = await supabaseAdmin
+  // Create guest-style member
+  const fullName = (opts.fullName ?? "").trim();
+  const parts = fullName ? fullName.split(/\s+/) : [];
+  const firstName = parts.length ? parts[0] : null;
+  const lastName = parts.length > 1 ? parts.slice(1).join(" ") : null;
+
+  const { data: created, error: createError } = await supabaseAdmin
     .from("members")
-    .insert({ email: norm })
-    .select("id,email")
+    .insert({
+      user_id: null,
+      email: emailNormalized,
+      first_name: firstName,
+      last_name: lastName,
+      phone: opts.phone ?? null,
+      newsletter_opt_in: false,
+      is_admin: false,
+    })
+    .select("id")
     .single();
 
-  if (error) throw new Error(`Failed creating member: ${error.message}`);
-  return created;
+  if (createError) throw createError;
+  return created.id as string;
+}
+async function creditGrantExistsForSession(
+  memberId: string,
+  stripeSessionId: string
+) {
+  const { data, error } = await supabaseAdmin
+    .from("credits_ledger")
+    .select("id")
+    .eq("member_id", memberId)
+    .eq("entry_type", "grant")
+    .ilike("reason", `%${stripeSessionId}%`)
+    .limit(1);
+
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
 }
 
 async function grantCredits(memberId: string, qty: number, reason: string) {
@@ -185,9 +220,34 @@ if (!Number.isFinite(credits) || credits <= 0) {
 
 
       if (credits > 0) {
-        const member = await getOrCreateMemberByEmail(email);
-        await grantCredits(member.id, credits, `Stripe checkout (${session.id})`);
-      }
+  const fullName = session.customer_details?.name ?? null;
+  const phone = session.customer_details?.phone ?? null;
+
+  const memberId = await getOrCreateMemberByEmail({
+    email,
+    fullName,
+    phone,
+  });
+
+  const alreadyGranted = await creditGrantExistsForSession(memberId, session.id);
+
+  if (!alreadyGranted) {
+    await grantCredits(
+      memberId,
+      credits,
+      `stripe checkout.session.completed | session=${session.id} | event=${event.id}`
+    );
+  }
+
+  // Attach booking pass to member (important for admin + consistency)
+  await supabaseAdmin
+    .from("booking_passes")
+    .update({ member_id: memberId })
+    .eq("stripe_session_id", session.id)
+    .is("member_id", null);
+}
+
+
 
       // PHASE 1.5 — Store guest profile for future prefill
       const fullName = session.customer_details?.name ?? null;
@@ -310,8 +370,8 @@ if (!email) throw new Error("No customer email on invoice");
       console.log("[stripe] invoice credits computed:", credits);
 
       if (credits > 0) {
-        const member = await getOrCreateMemberByEmail(email);
-        await grantCredits(member.id, credits, `Stripe invoice (${fullInvoice.id})`);
+        const memberId = await getOrCreateMemberByEmail({ email });
+        await grantCredits(memberId, credits, `Stripe invoice (${fullInvoice.id})`);
       }
 
       await markProcessed(event.id, event.type);
