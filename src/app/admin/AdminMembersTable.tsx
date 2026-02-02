@@ -33,11 +33,12 @@ type BookingIssueRow = {
 };
 
 function fmt(v: string | null | undefined) {
+  const ts = v ?? null;
   if (!ts) return "";
   try {
     return new Date(ts).toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
   } catch {
-    return "";
+    return ts;
   }
 }
 
