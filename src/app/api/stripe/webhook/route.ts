@@ -222,13 +222,17 @@ export async function POST(req: Request) {
         expand: ["lines.data.price"],
       });
 
-      const email =
-        fullInvoice.customer_email ||
-        (fullInvoice.customer as any)?.email ||
-        (fullInvoice.customer_details as any)?.email ||
-        undefined;
+     // Resolve customer email from invoice (Invoice does NOT have customer_details)
+let email: string | undefined =
+  fullInvoice.customer_email ||
+  (typeof fullInvoice.customer === "object" ? (fullInvoice.customer as any)?.email : undefined);
 
-      if (!email) throw new Error("No customer email on invoice");
+if (!email && typeof fullInvoice.customer === "string") {
+  const cust = (await stripe.customers.retrieve(fullInvoice.customer)) as any;
+  email = cust?.email || undefined;
+}
+
+if (!email) throw new Error("No customer email on invoice");
 
       let credits = 0;
       const lines = fullInvoice.lines?.data ?? [];
