@@ -3,6 +3,9 @@ import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import crypto from "crypto";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 function mustGetEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
@@ -13,79 +16,108 @@ function sha256Hex(input: string) {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
 export async function POST(req: Request) {
-  // Auth + admin check (browser session)
-  const supabase = await createSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    // ---- AuthZ: must be an admin user
+    const supabase = createSupabaseServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
 
-  const { data: me } = await supabase
-    .from("members")
-    .select("is_admin")
-    .eq("user_id", user.id)
-    .single();
+    if (userErr || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  if (!me?.is_admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const admin = createSupabaseAdminClient();
 
-  const body = await req.json().catch(() => null);
-  const emailRaw = (body?.email as string | undefined) ?? "";
-  const memberId = (body?.member_id as string | undefined) ?? null;
+    const { data: me, error: meErr } = await admin
+      .from("members")
+      .select("id,is_admin")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
-  const email = emailRaw.toLowerCase().trim();
-  if (!email) return NextResponse.json({ error: "email required" }, { status: 400 });
+    if (meErr) throw meErr;
+    if (!me?.is_admin) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
-  // Mint token + store hash
-  const token = crypto.randomUUID();
-  const token_hash = sha256Hex(token);
+    // ---- Input
+    const body = await req.json().catch(() => ({}));
+    const emailRaw = String(body?.email ?? "").trim();
+    const stripeSessionId =
+      body?.stripe_session_id != null ? String(body.stripe_session_id) : null;
 
-  const supabaseAdmin = createSupabaseAdminClient();
+    if (!emailRaw) {
+      return NextResponse.json({ error: "Missing email" }, { status: 400 });
+    }
 
-  // Safety: revoke any previous unused passes for this email/member so only ONE link can exist at a time
-  await supabaseAdmin
-    .from("booking_passes")
-    .update({ used_at: new Date().toISOString() })
-    .eq("email", email)
-    .is("used_at", null);
-  const { error: insErr } = await supabaseAdmin
-    .from("booking_passes")
-    .insert({
-      token_hash,
+    const email = normalizeEmail(emailRaw);
+
+    // ---- Generate booking pass token (REQUIRED by schema)
+    const token = crypto.randomBytes(32).toString("base64url"); // URL-safe
+    const tokenHash = sha256Hex(token);
+
+    // 48 hours
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+
+    // ---- Insert booking pass row (token is NOT NULL)
+    const { error: insertErr } = await admin.from("booking_passes").insert({
+      token,
+      token_hash: tokenHash,
       email,
-      member_id: memberId,
+      email_normalized: email,
+      stripe_session_id: stripeSessionId,
+      expires_at: expiresAt,
+      member_id: null,
     });
 
-  if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
+    if (insertErr) {
+      return NextResponse.json(
+        { error: insertErr.message },
+        { status: 500 }
+      );
+    }
 
-  // Email via Edge Function (reuse your existing send-booking-pass)
-  const cronKey = mustGetEnv("CRON_INVOKE_KEY");
-  const base = mustGetEnv("SUPABASE_FUNCTIONS_BASE_URL"); 
-  // e.g. https://vffglvixaokvtdrdpvtd.functions.supabase.co
+    // ---- Build booking URL
+    // Keep using your existing redeem function (Supabase Edge function)
+    const bookingUrl =
+      `https://vffglvixaokvtdrdpvtd.functions.supabase.co/redeem-booking-pass?token=${token}`;
 
-  const redeemUrl = `${base}/redeem-booking-pass?token=${encodeURIComponent(token)}`;
+    const html = `
+      <p>Here is your booking link.</p>
+      <p><a href="${bookingUrl}"><strong>Click here to book your Flintridge Sound Bath</strong></a></p>
+      <p>This link can be used <strong>once</strong> and expires in <strong>48 hours</strong>.</p>
+    `;
 
-  const resp = await fetch(`${base}/send-booking-pass`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-cron-key": cronKey,
-    },
-    body: JSON.stringify({
-      to: email,
-      subject: "Your booking link — Happens By Chance",
-      html:
-        `<p>Here is your one-time booking link:</p>` +
-        `<p><a href="${redeemUrl}">Book your session</a></p>` +
-        `<p>This link can only be used once.</p>`,
-    }),
-  });
+    // ---- Send email via Edge Function (Resend)
+    // Uses the same mechanism as your Stripe webhook.
+    await fetch(
+      "https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-cron-key": mustGetEnv("CRON_INVOKE_KEY"),
+        },
+        body: JSON.stringify({
+          to: email,
+          subject: "Your booking link — Happens By Chance",
+          html,
+        }),
+      }
+    );
 
-  const outText = await resp.text();
-  if (!resp.ok) {
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    console.error("[admin] send booking-pass error:", err?.message);
     return NextResponse.json(
-      { error: `send-booking-pass failed (${resp.status}): ${outText}` },
-      { status: 400 }
+      { error: err?.message ?? "Unknown error" },
+      { status: 500 }
     );
   }
-
-  return NextResponse.json({ ok: true });
 }
