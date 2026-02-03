@@ -57,6 +57,45 @@ export async function POST(req: Request) {
     }
 
     const email = normalizeEmail(emailRaw);
+    // ---- Must be an existing member with >= 1 credit
+    const { data: memberRow, error: memberErr } = await admin
+      .from("members")
+      .select("id,email")
+      .ilike("email", email)
+      .maybeSingle();
+
+    if (memberErr) {
+      return NextResponse.json({ error: memberErr.message }, { status: 500 });
+    }
+
+    if (!memberRow) {
+      return NextResponse.json(
+        { error: "No member found for this email. Create member / add credit first." },
+        { status: 400 }
+      );
+    }
+
+    const { data: ledgerRows, error: ledgerErr } = await admin
+      .from("credits_ledger")
+      .select("entry_type,quantity")
+      .eq("member_id", memberRow.id);
+
+    if (ledgerErr) {
+      return NextResponse.json({ error: ledgerErr.message }, { status: 500 });
+    }
+
+    let balance = 0;
+    for (const r of ledgerRows ?? []) {
+      if (r.entry_type === "grant" || r.entry_type === "refund") balance += r.quantity ?? 0;
+      else if (r.entry_type === "redeem") balance -= r.quantity ?? 0;
+    }
+
+    if (balance < 1) {
+      return NextResponse.json(
+        { error: "Insufficient credits. Add +1 credit first, then send booking link." },
+        { status: 400 }
+      );
+    }
 
     // ---- Generate booking pass token (REQUIRED by schema)
     const token = crypto.randomBytes(32).toString("base64url"); // URL-safe
@@ -72,7 +111,7 @@ export async function POST(req: Request) {
   email,
   stripe_session_id: stripeSessionId,
   expires_at: expiresAt,
-  member_id: null,
+  member_id: memberRow.id,
 });
 
 
