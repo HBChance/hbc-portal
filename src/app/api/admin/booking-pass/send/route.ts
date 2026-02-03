@@ -67,14 +67,14 @@ export async function POST(req: Request) {
 
     // ---- Insert booking pass row (token is NOT NULL)
     const { error: insertErr } = await admin.from("booking_passes").insert({
-      token,
-      token_hash: tokenHash,
-      email,
-      email_normalized: email,
-      stripe_session_id: stripeSessionId,
-      expires_at: expiresAt,
-      member_id: null,
-    });
+  token,
+  token_hash: tokenHash,
+  email,
+  stripe_session_id: stripeSessionId,
+  expires_at: expiresAt,
+  member_id: null,
+});
+
 
     if (insertErr) {
       return NextResponse.json(
