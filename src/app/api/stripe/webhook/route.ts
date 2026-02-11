@@ -282,13 +282,13 @@ if (!Number.isFinite(credits) || credits <= 0) {
           email,
           stripe_session_id: session.id,
           expires_at: expiresAt,
-          member_id, // <-- ALWAYS attach member_id at creation time
+          member_id: memberId, // <-- ALWAYS attach member_id at creation time
         });
       } else if (!existingPass.member_id) {
         // Backfill linkage if an older/orphaned pass exists
         await supabaseAdmin
           .from("booking_passes")
-          .update({ member_id })
+          .update({ member_id: memberId })
           .eq("id", existingPass.id);
       }
 
