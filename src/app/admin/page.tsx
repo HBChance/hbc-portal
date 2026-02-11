@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import AdminMembersTable from "./AdminMembersTable";
 
@@ -17,10 +18,25 @@ type MemberRow = {
   waiver_signed_at: string | null;
 };
 
+function createSupabaseServiceRoleClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env"
+    );
+  }
+
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 export default async function AdminHome() {
+  // Session client: only for auth (who is logged in)
   const supabase = await createSupabaseServerClient();
 
-  // 1) Require login
   const {
     data: { user },
     error: userErr,
@@ -28,8 +44,11 @@ export default async function AdminHome() {
 
   if (userErr || !user) redirect("/login");
 
-  // 2) Require admin (via members.is_admin)
-  const { data: me, error: meErr } = await supabase
+  // Service role client: for all admin reads (bypasses RLS + priv restrictions)
+  const admin = createSupabaseServiceRoleClient();
+
+  // Require admin (via members.is_admin)
+  const { data: me, error: meErr } = await admin
     .from("members")
     .select("id, is_admin")
     .eq("user_id", user.id)
@@ -39,30 +58,29 @@ export default async function AdminHome() {
     console.error("[admin] failed to read members row:", meErr.message);
     redirect("/app");
   }
-
   if (!me?.is_admin) redirect("/app");
 
-  // 3) Fetch members list
-  const { data: membersData, error: membersErr } = await supabase
+  // Fetch members list
+  const { data: membersData, error: membersErr } = await admin
     .from("members")
     .select("*")
     .order("created_at", { ascending: false });
 
   if (membersErr) console.error("[admin] members fetch error:", membersErr.message);
-  // 3.5) Fetch purchase history (booking passes created from $45 purchases)
-  const { data: purchasesData, error: pErr } = await supabase
+
+  // Fetch purchase history (booking passes created from purchases)
+  const { data: purchasesData, error: pErr } = await admin
     .from("booking_passes")
-    .select("email_normalized, created_at");
+    .select("email_normalized, email, created_at");
 
   if (pErr) console.error("[admin] booking_passes fetch error:", pErr.message);
 
-   const purchaseStatsByEmail = new Map<
+  const purchaseStatsByEmail = new Map<
     string,
     { count: number; last_purchase_at: string | null }
   >();
 
-
-   (purchasesData ?? []).forEach((p: any) => {
+  (purchasesData ?? []).forEach((p: any) => {
     const emailKey = ((p.email_normalized ?? p.email ?? "") as string).toLowerCase().trim();
     if (!emailKey) return;
 
@@ -78,8 +96,8 @@ export default async function AdminHome() {
     purchaseStatsByEmail.set(emailKey, { count: nextCount, last_purchase_at: nextLast });
   });
 
-  // 4) Fetch balances view
-  const { data: balancesData, error: balErr } = await supabase
+  // Fetch balances view (member_id -> balance)
+  const { data: balancesData, error: balErr } = await admin
     .from("v_member_credit_balance")
     .select("member_id,balance");
 
@@ -90,8 +108,9 @@ export default async function AdminHome() {
     const n = typeof r.balance === "number" ? r.balance : Number(r.balance ?? 0);
     balanceById.set(r.member_id, Number.isFinite(n) ? n : 0);
   });
-  // 4.5) Fetch guest profile names (Stripe checkout) for fallback display
-  const { data: guestProfiles, error: gpErr } = await supabase
+
+  // Fetch guest profile names (Stripe checkout) for fallback display
+  const { data: guestProfiles, error: gpErr } = await admin
     .from("guest_profiles")
     .select("email_normalized, full_name");
 
@@ -104,8 +123,8 @@ export default async function AdminHome() {
     if (key && nm) guestNameByEmail.set(key, nm);
   });
 
-  // 5) Fetch waiver statuses (from waivers table)
-  const { data: waiversData, error: waiverErr } = await supabase
+  // Fetch waiver statuses (from waivers table)
+  const { data: waiversData, error: waiverErr } = await admin
     .from("waivers")
     .select("member_id, waiver_year, sent_at, signed_at")
     .eq("waiver_year", WAIVER_YEAR);
@@ -127,13 +146,10 @@ export default async function AdminHome() {
   const rows: MemberRow[] = (membersData ?? []).map((m: any) => {
     const first = (m.first_name ?? "").trim();
     const last = (m.last_name ?? "").trim();
-        const normalizedEmail = (m.email ?? "").toLowerCase().trim();
+    const normalizedEmail = (m.email ?? "").toLowerCase().trim();
     const fallbackGuestName = guestNameByEmail.get(normalizedEmail) ?? null;
 
-    const name =
-      [first, last].filter(Boolean).join(" ") ||
-      fallbackGuestName ||
-      null;
+    const name = [first, last].filter(Boolean).join(" ") || fallbackGuestName || null;
 
     const w = waiverByMemberId.get(m.id);
     const waiverSent = w?.sent_at ?? null;
@@ -145,14 +161,16 @@ export default async function AdminHome() {
       ? "sent"
       : "missing";
 
+    const emailKey = (m.email ?? "").toLowerCase().trim();
+
     return {
       id: m.id,
       name,
       email: m.email,
       phone: m.phone ?? null,
       credits: balanceById.get(m.id) ?? 0,
-      purchase_count: purchaseStatsByEmail.get((m.email ?? "").toLowerCase().trim())?.count ?? 0,
-      last_purchase_at: purchaseStatsByEmail.get((m.email ?? "").toLowerCase().trim())?.last_purchase_at ?? null,
+      purchase_count: purchaseStatsByEmail.get(emailKey)?.count ?? 0,
+      last_purchase_at: purchaseStatsByEmail.get(emailKey)?.last_purchase_at ?? null,
       waiver_status,
       waiver_sent_at: waiverSent,
       waiver_signed_at: waiverSigned,
