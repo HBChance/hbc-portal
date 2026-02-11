@@ -220,31 +220,29 @@ if (!Number.isFinite(credits) || credits <= 0) {
 
 
       if (credits > 0) {
-  const fullName = session.customer_details?.name ?? null;
-  const phone = session.customer_details?.phone ?? null;
+        const fullName = session.customer_details?.name ?? null;
+      const phone = session.customer_details?.phone ?? null;
 
-  const memberId = await getOrCreateMemberByEmail({
-    email,
-    fullName,
-    phone,
-  });
+      const memberId = await getOrCreateMemberByEmail({
+        email,
+        fullName,
+        phone,
+      });
 
-  const alreadyGranted = await creditGrantExistsForSession(memberId, session.id);
+      const alreadyGranted = await creditGrantExistsForSession(memberId, session.id);
 
-  if (!alreadyGranted) {
-    await grantCredits(
-      memberId,
-      credits,
-      `stripe checkout.session.completed | session=${session.id} | event=${event.id}`
-    );
-  }
+      if (!alreadyGranted) {
+        await grantCredits(
+          memberId,
+          credits,
+          `stripe checkout.session.completed | session=${session.id} | event=${event.id}`
+        );
+      }
 }
 
 
 
       // PHASE 1.5 — Store guest profile for future prefill
-      const fullName = session.customer_details?.name ?? null;
-      const phone = session.customer_details?.phone ?? null;
 
       const stripeCustomerId =
         typeof session.customer === "string" ? session.customer : null;
@@ -264,26 +262,38 @@ if (!Number.isFinite(credits) || credits <= 0) {
           { onConflict: "email_normalized" }
         );
 
-      // PHASE 1.5B — Create one-time booking pass + email it
+            // PHASE 1.5B — Create one-time booking pass + email it (idempotent)
+      const { data: existingPass } = await supabaseAdmin
+        .from("booking_passes")
+        .select("id, token, member_id")
+        .eq("stripe_session_id", session.id)
+        .maybeSingle();
+
+      if (existingPass) {
+        // Backfill linkage for older/orphaned pass rows
+        if (!existingPass.member_id) {
+          await supabaseAdmin
+            .from("booking_passes")
+            .update({ member_id: memberId })
+            .eq("id", existingPass.id);
+        }
+
+        await markProcessed(event.id, event.type);
+        return new Response("OK (pass already existed)", { status: 200 });
+      }
+
       const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
       const token = Buffer.from(tokenBytes).toString("base64url"); // URL-safe
       const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(); // 48h
 
-      // Idempotency: if Stripe retries this event, don't create/send multiple passes
-      const { data: existingPass } = await supabaseAdmin
-        .from("booking_passes")
-        .select("id, token, used_at, expires_at, member_id")
-        .eq("stripe_session_id", session.id)
-        .maybeSingle();
+      await supabaseAdmin.from("booking_passes").insert({
+        token,
+        email,
+        stripe_session_id: session.id,
+        expires_at: expiresAt,
+        member_id: memberId, // ALWAYS link at creation time
+      });
 
-      if (!existingPass) {
-        await supabaseAdmin.from("booking_passes").insert({
-          token,
-          email,
-          stripe_session_id: session.id,
-          expires_at: expiresAt,
-          member_id: memberId, // <-- ALWAYS attach member_id at creation time
-        });
       } else if (!existingPass.member_id) {
         // Backfill linkage if an older/orphaned pass exists
         await supabaseAdmin
