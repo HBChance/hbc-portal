@@ -150,18 +150,20 @@ export default async function AdminHome() {
 
     const emailKey = (m.email ?? "").toLowerCase().trim();
 
-    return {
-      id: m.id,
-      name,
-      email: m.email,
-      phone: m.phone ?? null,
-      credits: balanceById.get(m.id) ?? 0,
-      purchase_count: purchaseStatsByEmail.get(emailKey)?.count ?? 0,
-      last_purchase_at: purchaseStatsByEmail.get(emailKey)?.last_purchase_at ?? null,
-      waiver_status,
-      waiver_sent_at: waiverSent,
-      waiver_signed_at: waiverSigned,
-    };
+   return {
+  id: m.id,
+  first_name: m.first_name ?? null,
+  last_name: m.last_name ?? null,
+  name,
+  email: m.email,
+  phone: m.phone ?? null,
+  credits: balanceById.get(m.id) ?? 0,
+  purchase_count: purchaseStatsByEmail.get(emailKey)?.count ?? 0,
+  last_purchase_at: purchaseStatsByEmail.get(emailKey)?.last_purchase_at ?? null,
+  waiver_status,
+  waiver_sent_at: waiverSent,
+  waiver_signed_at: waiverSigned,
+};
   });
 
   return (
