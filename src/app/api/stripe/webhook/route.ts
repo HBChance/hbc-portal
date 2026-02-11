@@ -238,13 +238,6 @@ if (!Number.isFinite(credits) || credits <= 0) {
       `stripe checkout.session.completed | session=${session.id} | event=${event.id}`
     );
   }
-
-  // Attach booking pass to member (important for admin + consistency)
-  await supabaseAdmin
-    .from("booking_passes")
-    .update({ member_id: memberId })
-    .eq("stripe_session_id", session.id)
-    .is("member_id", null);
 }
 
 
@@ -276,12 +269,36 @@ if (!Number.isFinite(credits) || credits <= 0) {
       const token = Buffer.from(tokenBytes).toString("base64url"); // URL-safe
       const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(); // 48h
 
-      await supabaseAdmin.from("booking_passes").insert({
-        token,
-        email,
-        stripe_session_id: session.id,
-        expires_at: expiresAt,
-      });
+      // Idempotency: if Stripe retries this event, don't create/send multiple passes
+      const { data: existingPass } = await supabaseAdmin
+        .from("booking_passes")
+        .select("id, token, used_at, expires_at, member_id")
+        .eq("stripe_session_id", session.id)
+        .maybeSingle();
+
+      if (!existingPass) {
+        await supabaseAdmin.from("booking_passes").insert({
+          token,
+          email,
+          stripe_session_id: session.id,
+          expires_at: expiresAt,
+          member_id, // <-- ALWAYS attach member_id at creation time
+        });
+      } else if (!existingPass.member_id) {
+        // Backfill linkage if an older/orphaned pass exists
+        await supabaseAdmin
+          .from("booking_passes")
+          .update({ member_id })
+          .eq("id", existingPass.id);
+      }
+
+      // If the pass already exists, do not resend the email automatically (prevents spam).
+      // Admin can manually resend if needed.
+      if (existingPass) {
+        await markProcessed(event.id, event.type);
+        return new Response("OK (pass already existed)", { status: 200 });
+      }
+
 
      // This is your single-use gate (no Squarespace page needed)
       const bookingUrl =
