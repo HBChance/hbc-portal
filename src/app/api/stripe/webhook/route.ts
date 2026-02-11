@@ -413,3 +413,4 @@ if (!email) throw new Error("No customer email on invoice");
     return new Response(`Handler Error: ${err?.message}`, { status: 500 });
   }
 }
+}
