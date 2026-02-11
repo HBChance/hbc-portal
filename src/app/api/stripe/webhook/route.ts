@@ -163,6 +163,8 @@ export async function POST(req: Request) {
         undefined;
 
       if (!email) throw new Error("No customer email on checkout session");
+	const fullName = session.customer_details?.name ?? null;
+	const phone = session.customer_details?.phone ?? null;
 
       // --- CREDITS: one-time purchase computation (LIVE-safe) ---
 const metaCreditsRaw =
@@ -220,8 +222,6 @@ if (!Number.isFinite(credits) || credits <= 0) {
 
 
       if (credits > 0) {
-        const fullName = session.customer_details?.name ?? null;
-      const phone = session.customer_details?.phone ?? null;
 
       const memberId = await getOrCreateMemberByEmail({
         email,
@@ -238,12 +238,9 @@ if (!Number.isFinite(credits) || credits <= 0) {
           `stripe checkout.session.completed | session=${session.id} | event=${event.id}`
         );
       }
-}
 
 
-
-      // PHASE 1.5 — Store guest profile for future prefill
-
+         // PHASE 1.5 — Store guest profile for future prefill
       const stripeCustomerId =
         typeof session.customer === "string" ? session.customer : null;
 
@@ -262,10 +259,10 @@ if (!Number.isFinite(credits) || credits <= 0) {
           { onConflict: "email_normalized" }
         );
 
-            // PHASE 1.5B — Create one-time booking pass + email it (idempotent)
+      // PHASE 1.5B — Create one-time booking pass + email it (idempotent)
       const { data: existingPass } = await supabaseAdmin
         .from("booking_passes")
-        .select("id, token, member_id")
+        .select("id, member_id")
         .eq("stripe_session_id", session.id)
         .maybeSingle();
 
@@ -294,25 +291,10 @@ if (!Number.isFinite(credits) || credits <= 0) {
         member_id: memberId, // ALWAYS link at creation time
       });
 
-      } else if (!existingPass.member_id) {
-        // Backfill linkage if an older/orphaned pass exists
-        await supabaseAdmin
-          .from("booking_passes")
-          .update({ member_id: memberId })
-          .eq("id", existingPass.id);
-      }
-
-      // If the pass already exists, do not resend the email automatically (prevents spam).
-      // Admin can manually resend if needed.
-      if (existingPass) {
-        await markProcessed(event.id, event.type);
-        return new Response("OK (pass already existed)", { status: 200 });
-      }
-
-
-     // This is your single-use gate (no Squarespace page needed)
+      // This is your single-use gate (no Squarespace page needed)
       const bookingUrl =
         `https://vffglvixaokvtdrdpvtd.functions.supabase.co/redeem-booking-pass?token=${token}`;
+
 
       const html = `
         <p>Thank you for your purchase.</p>
@@ -340,6 +322,8 @@ if (!Number.isFinite(credits) || credits <= 0) {
       await markProcessed(event.id, event.type);
       return new Response("OK", { status: 200 });
     }
+
+    } // <-- ADD THIS LINE to close: if (credits > 0) {
 
     // SUBSCRIPTIONS / RENEWALS
     if (event.type === "invoice.payment_succeeded") {
@@ -405,12 +389,11 @@ if (!email) throw new Error("No customer email on invoice");
       return new Response("OK", { status: 200 });
     }
 
-    // Default: record + ignore
+        // Default: record + ignore
     await markProcessed(event.id, event.type);
     return new Response("Ignored", { status: 200 });
   } catch (err: any) {
     console.error("[stripe] handler error:", err?.message);
     return new Response(`Handler Error: ${err?.message}`, { status: 500 });
   }
-}
 }
