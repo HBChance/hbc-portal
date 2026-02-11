@@ -1,22 +1,9 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
-import AdminMembersTable from "./AdminMembersTable";
+import AdminMembersTable, { type MemberRow } from "./AdminMembersTable";
 
 const WAIVER_YEAR = 2026;
-
-type MemberRow = {
-  id: string;
-  name: string | null;
-  email: string;
-  phone: string | null;
-  credits: number;
-  purchase_count: number;
-  last_purchase_at: string | null;
-  waiver_status: "missing" | "sent" | "signed";
-  waiver_sent_at: string | null;
-  waiver_signed_at: string | null;
-};
 
 function createSupabaseServiceRoleClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-type MemberRow = {
+export type MemberRow = {
   id: string;
   email: string;
   first_name: string | null;
