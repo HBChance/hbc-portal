@@ -5,14 +5,14 @@ import React, { useEffect, useMemo, useState } from "react";
 type MemberRow = {
   id: string;
   email: string;
-  first_name?: string | null;
-  last_name?: string | null;
-  name?: string | null;
-  phone?: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  name: string | null;
+  phone: string | null;
   credits: number;
 
-  purchase_count?: number;
-  last_purchase_at?: string | null;
+  purchase_count: number;
+  last_purchase_at: string | null;
 
   waiver_status: "missing" | "sent" | "signed";
   waiver_sent_at: string | null;
