@@ -286,7 +286,11 @@ export default async function AdminHome() {
                     <td style={{ padding: "10px 12px" }}>{fmt(r.member_created_at)}</td>
 	
 		<td style={{ padding: "10px 12px" }}>
-		  <RowActions email={r.email} memberId={r.member_id} />
+		  <RowActions
+  email={r.email}
+  memberId={r.member_id}
+  waiverStatus={(r as any).waiver_status}
+/>
 		</td>
 
                   </tr>

@@ -5,9 +5,11 @@ import { useState } from "react";
 export function RowActions({
   email,
   memberId,
+  waiverStatus,
 }: {
   email: string | null;
   memberId: string;
+  waiverStatus?: "missing" | "sent" | "signed";
 }) {
   const [busy, setBusy] = useState<null | "booking" | "waiver">(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export function RowActions({
 
       <button
         type="button"
-        disabled={busy !== null}
+        disabled={busy !== null || waiverStatus === "signed"}
         onClick={async () => {
           setMsg(null);
           setBusy("waiver");
@@ -79,10 +81,11 @@ export function RowActions({
           padding: "6px 10px",
           fontSize: 12,
           background: "white",
-          opacity: busy !== null ? 0.5 : 1,
-          cursor: busy !== null ? "not-allowed" : "pointer",
+          opacity: busy !== null || waiverStatus === "signed" ? 0.5 : 1,
+	  cursor: busy !== null || waiverStatus === "signed" ? "not-allowed" : "pointer",
+
         }}
-        title="Send annual waiver via SignNow"
+        title={waiverStatus === "signed" ? "Already signed" : "Send annual waiver via SignNow"}
       >
         {busy === "waiver" ? "Sending…" : "Send waiver"}
       </button>
