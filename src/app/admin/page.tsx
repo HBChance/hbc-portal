@@ -252,6 +252,7 @@ export default async function AdminHome() {
                     <td style={{ padding: "10px 12px" }}>
                       <Badge tone={balTone}>{bal}</Badge>
                     </td>
+		    <td style={{ padding: "10px 12px" }}>{(r as any).purchases_count ?? 0}</td>
 
                     <td style={{ padding: "10px 12px" }}>
                       <div>{fmt(r.last_activity_at)}</div>
@@ -272,6 +273,11 @@ export default async function AdminHome() {
                     </td>
 
                     <td style={{ padding: "10px 12px" }}>{fmt(r.member_created_at)}</td>
+	
+		<td style={{ padding: "10px 12px" }}>
+		  <RowActions email={r.email} memberId={r.member_id} />
+		</td>
+
                   </tr>
                 );
               })}
