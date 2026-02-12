@@ -6,11 +6,17 @@ export const dynamic = "force-dynamic";
 
 type Overview = {
   stats: {
-    member_count: number;
-    total_credits: number;
-    members_with_zero: number;
-    members_with_positive: number;
+  member_count: number;
+  total_credits: number;
+  members_with_zero: number;
+  members_with_positive: number;
+  triage: {
+    negative_balance: number;
+    has_credits_no_active_pass: number;
+    pass_expiring_soon: number;
+    no_recent_activity_30d: number;
   };
+};
   rows: Array<{
     member_id: string;
     email: string | null;
@@ -160,6 +166,34 @@ export default async function AdminHome() {
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: "#64748b" }}>Has Credits</div>
           <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.members_with_positive}</div>
+        </div>
+      </div>
+      {/* triage panel */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 10,
+        }}
+      >
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontSize: 12, color: "#64748b" }}>Credits & no active pass</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.has_credits_no_active_pass}</div>
+        </div>
+
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontSize: 12, color: "#64748b" }}>Pass expiring ≤ 6h</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.pass_expiring_soon}</div>
+        </div>
+
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontSize: 12, color: "#64748b" }}>No activity (30d)</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.no_recent_activity_30d}</div>
+        </div>
+
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontSize: 12, color: "#64748b" }}>Negative balance</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.negative_balance}</div>
         </div>
       </div>
 
