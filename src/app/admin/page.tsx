@@ -42,6 +42,8 @@ purchases_count: number;
       expires_at: string | null;
       consumed_at: string | null;
       used_at?: string | null; // tolerate older field names
+	waiver_status?: "missing" | "sent" | "signed";
+
     };
   }>;
 };
@@ -221,6 +223,7 @@ export default async function AdminHome() {
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Member</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Balance</th>
 		<th style={{ textAlign: "left", padding: "10px 12px" }}>Purchases</th>
+		<th style={{ textAlign: "left", padding: "10px 12px" }}>Waiver</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Last Activity</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Pass</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Member Since</th>
@@ -253,6 +256,14 @@ export default async function AdminHome() {
                       <Badge tone={balTone}>{bal}</Badge>
                     </td>
 		    <td style={{ padding: "10px 12px" }}>{(r as any).purchases_count ?? 0}</td>
+<td style={{ padding: "10px 12px" }}>
+  {(() => {
+    const s = (r as any).waiver_status as "missing" | "sent" | "signed" | undefined;
+    if (s === "signed") return <Badge tone="green">Signed</Badge>;
+    if (s === "sent") return <Badge tone="blue">Sent</Badge>;
+    return <Badge tone="amber">Missing</Badge>;
+  })()}
+</td>
 
                     <td style={{ padding: "10px 12px" }}>
                       <div>{fmt(r.last_activity_at)}</div>
