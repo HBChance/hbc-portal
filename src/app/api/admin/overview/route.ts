@@ -99,15 +99,6 @@ for (const r of purchaseGrants ?? []) {
 
   const membersById = new Map((members ?? []).map((m: any) => [m.id, m]));
 // 4.5) Stripe purchase counts (count grant rows whose reason starts with "stripe")
-const { data: purchaseGrants, error: pgErr } = await supabase
-  .from("credits_ledger")
-  .select("member_id,entry_type,reason")
-  .eq("entry_type", "grant")
-  .ilike("reason", "stripe%");
-
-if (pgErr) {
-  return NextResponse.json({ error: pgErr.message }, { status: 500 });
-}
 
   const rows = (balances ?? [])
     .map((b: any) => {
