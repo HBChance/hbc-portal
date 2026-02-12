@@ -109,12 +109,6 @@ if (pgErr) {
   return NextResponse.json({ error: pgErr.message }, { status: 500 });
 }
 
-const purchasesCountByMember = new Map<string, number>();
-for (const r of purchaseGrants ?? []) {
-  const k = r.member_id as string;
-  purchasesCountByMember.set(k, (purchasesCountByMember.get(k) ?? 0) + 1);
-}
-
   const rows = (balances ?? [])
     .map((b: any) => {
       const m = membersById.get(b.member_id);
@@ -154,9 +148,8 @@ const flags = {
         full_name: fullName,
         phone: m?.phone ?? null,
         member_created_at: m?.created_at ?? null,
-
         balance,
-
+	purchases_count: purchasesCountByMember.get(b.member_id) ?? 0,
         last_activity_at: lastLedger?.created_at ?? null,
         last_activity: lastLedger
           ? {
