@@ -10,6 +10,7 @@ export function RowActions({
   email: string | null;
   memberId: string;
   waiverStatus?: "missing" | "sent" | "signed";
+balance?: number;
 }) {
   const [busy, setBusy] = useState<null | "booking" | "waiver">(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -30,7 +31,7 @@ export function RowActions({
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button
         type="button"
-        disabled={!email || busy !== null}
+        disabled={!email || busy !== null || (balance ?? 0) < 1}
         onClick={async () => {
           if (!email) return;
           setMsg(null);
@@ -51,10 +52,17 @@ export function RowActions({
           padding: "6px 10px",
           fontSize: 12,
           background: "white",
-          opacity: !email || busy !== null ? 0.5 : 1,
-          cursor: !email || busy !== null ? "not-allowed" : "pointer",
+          opacity: busy !== null || !email || (balance ?? 0) < 1 ? 0.5 : 1,
+	  cursor: busy !== null || !email || (balance ?? 0) < 1 ? "not-allowed" : "pointer",
+
         }}
-        title={!email ? "Missing email" : "Send booking link email"}
+        title={
+  !email
+    ? "Missing email"
+    : (balance ?? 0) < 1
+    ? "Member has no credits"
+    : "Send booking link email"
+}
       >
         {busy === "booking" ? "Sending…" : "Send booking link"}
       </button>
