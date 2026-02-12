@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { RowActions } from "./RowActions";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,8 @@ type Overview = {
   stats: {
   member_count: number;
   total_credits: number;
+purchases_count: number;
+
   members_with_zero: number;
   members_with_positive: number;
   triage: {
@@ -183,7 +186,7 @@ export default async function AdminHome() {
 
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: "#64748b" }}>Pass expiring ≤ 6h</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.pass_expiring_soon ?? 0}</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.pass_expired ?? 0}</div>
         </div>
 
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
@@ -217,9 +220,11 @@ export default async function AdminHome() {
               <tr>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Member</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Balance</th>
+		<th style={{ textAlign: "left", padding: "10px 12px" }}>Purchases</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Last Activity</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Pass</th>
                 <th style={{ textAlign: "left", padding: "10px 12px" }}>Member Since</th>
+		<th style={{ textAlign: "left", padding: "10px 12px" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
