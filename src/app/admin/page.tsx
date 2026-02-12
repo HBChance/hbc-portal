@@ -178,22 +178,22 @@ export default async function AdminHome() {
       >
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: "#64748b" }}>Credits & no active pass</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.has_credits_no_active_pass}</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage?.has_credits_no_active_pass ?? 0}</div>
         </div>
 
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: "#64748b" }}>Pass expiring ≤ 6h</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.pass_expiring_soon}</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.pass_expiring_soon ?? 0}</div>
         </div>
 
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: "#64748b" }}>No activity (30d)</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.no_recent_activity_30d}</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.no_recent_activity_30d ?? 0}</div>
         </div>
 
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: "#64748b" }}>Negative balance</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.negative_balance}</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.negative_balance ?? 0}</div>
         </div>
       </div>
 

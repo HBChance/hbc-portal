@@ -158,12 +158,18 @@ const flags = {
       return bc - ac;
     });
 
-  const stats = {
-    member_count: rows.length,
-    total_credits: rows.reduce((sum: number, r: any) => sum + (Number(r.balance) || 0), 0),
-    members_with_zero: rows.filter((r: any) => (Number(r.balance) || 0) === 0).length,
-    members_with_positive: rows.filter((r: any) => (Number(r.balance) || 0) > 0).length,
-  };
+ const stats = {
+  member_count: rows.length,
+  total_credits: rows.reduce((sum: number, r: any) => sum + (Number(r.balance) || 0), 0),
+  members_with_zero: rows.filter((r: any) => (Number(r.balance) || 0) === 0).length,
+  members_with_positive: rows.filter((r: any) => (Number(r.balance) || 0) > 0).length,
+  triage: {
+    negative_balance: rows.filter((r: any) => r.flags?.negative_balance).length,
+    has_credits_no_active_pass: rows.filter((r: any) => r.flags?.has_credits_no_active_pass).length,
+    pass_expiring_soon: rows.filter((r: any) => r.flags?.pass_expiring_soon).length,
+    no_recent_activity_30d: rows.filter((r: any) => r.flags?.no_recent_activity_30d).length,
+  },
+};
 
   return NextResponse.json({ stats, rows });
 }
