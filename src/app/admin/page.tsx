@@ -16,7 +16,7 @@ purchases_count: number;
   triage: {
     negative_balance: number;
     has_credits_no_active_pass: number;
-    pass_expiring_soon: number;
+    pass_expired: number;
     no_recent_activity_30d: number;
   };
 };
