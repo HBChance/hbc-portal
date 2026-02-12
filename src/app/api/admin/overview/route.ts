@@ -63,6 +63,22 @@ export async function GET() {
   for (const row of ledgerRows ?? []) {
     if (!latestLedgerByMember.has(row.member_id)) latestLedgerByMember.set(row.member_id, row);
   }
+// 3.5) Stripe purchase counts (count grant rows whose reason starts with "stripe")
+const { data: purchaseGrants, error: pgErr } = await supabase
+  .from("credits_ledger")
+  .select("member_id,entry_type,reason")
+  .eq("entry_type", "grant")
+  .ilike("reason", "stripe%");
+
+if (pgErr) {
+  return NextResponse.json({ error: pgErr.message }, { status: 500 });
+}
+
+const purchasesCountByMember = new Map<string, number>();
+for (const r of purchaseGrants ?? []) {
+  const k = r.member_id as string;
+  purchasesCountByMember.set(k, (purchasesCountByMember.get(k) ?? 0) + 1);
+}
 
   // 4) Latest booking pass per member
   const { data: passes, error: passErr } = await supabase
@@ -82,6 +98,22 @@ export async function GET() {
   }
 
   const membersById = new Map((members ?? []).map((m: any) => [m.id, m]));
+// 4.5) Stripe purchase counts (count grant rows whose reason starts with "stripe")
+const { data: purchaseGrants, error: pgErr } = await supabase
+  .from("credits_ledger")
+  .select("member_id,entry_type,reason")
+  .eq("entry_type", "grant")
+  .ilike("reason", "stripe%");
+
+if (pgErr) {
+  return NextResponse.json({ error: pgErr.message }, { status: 500 });
+}
+
+const purchasesCountByMember = new Map<string, number>();
+for (const r of purchaseGrants ?? []) {
+  const k = r.member_id as string;
+  purchasesCountByMember.set(k, (purchasesCountByMember.get(k) ?? 0) + 1);
+}
 
   const rows = (balances ?? [])
     .map((b: any) => {
@@ -105,10 +137,7 @@ const flags = {
   negative_balance: balance < 0,
   zero_balance: balance === 0,
   has_credits_no_active_pass: balance > 0 && pass_state !== "active",
-  pass_expiring_soon:
-    pass_state === "active" &&
-    pass_expires_in_hours !== null &&
-    pass_expires_in_hours <= 6,
+  pass_expired: pass_state === "expired",
   no_recent_activity_30d: !lastLedger?.created_at
     ? true
     : Date.parse(lastLedger.created_at) <
@@ -164,11 +193,12 @@ const flags = {
   members_with_zero: rows.filter((r: any) => (Number(r.balance) || 0) === 0).length,
   members_with_positive: rows.filter((r: any) => (Number(r.balance) || 0) > 0).length,
   triage: {
-    negative_balance: rows.filter((r: any) => r.flags?.negative_balance).length,
-    has_credits_no_active_pass: rows.filter((r: any) => r.flags?.has_credits_no_active_pass).length,
-    pass_expiring_soon: rows.filter((r: any) => r.flags?.pass_expiring_soon).length,
-    no_recent_activity_30d: rows.filter((r: any) => r.flags?.no_recent_activity_30d).length,
-  },
+  negative_balance: rows.filter((r: any) => r.flags?.negative_balance).length,
+  has_credits_no_active_pass: rows.filter((r: any) => r.flags?.has_credits_no_active_pass).length,
+  pass_expired: rows.filter((r: any) => r.flags?.pass_expired).length,
+  no_recent_activity_30d: rows.filter((r: any) => r.flags?.no_recent_activity_30d).length,
+},
+
 };
 
   return NextResponse.json({ stats, rows });
