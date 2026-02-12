@@ -79,6 +79,25 @@ for (const r of purchaseGrants ?? []) {
   const k = r.member_id as string;
   purchasesCountByMember.set(k, (purchasesCountByMember.get(k) ?? 0) + 1);
 }
+// 3.75) Waiver status (current year)
+const WAIVER_YEAR = new Date().getFullYear();
+
+const { data: waivers, error: wErr } = await supabase
+  .from("waivers")
+  .select("member_id,recipient_email,status,sent_at,signed_at,waiver_year")
+  .eq("waiver_year", WAIVER_YEAR);
+
+if (wErr) {
+  return NextResponse.json({ error: wErr.message }, { status: 500 });
+}
+
+const waiverByMemberId = new Map<string, any>();
+const waiverByEmail = new Map<string, any>();
+
+for (const w of waivers ?? []) {
+  if (w.member_id) waiverByMemberId.set(w.member_id, w);
+  if (w.recipient_email) waiverByEmail.set(String(w.recipient_email).toLowerCase(), w);
+}
 
   // 4) Latest booking pass per member
   const { data: passes, error: passErr } = await supabase
@@ -141,6 +160,17 @@ const flags = {
         member_created_at: m?.created_at ?? null,
         balance,
 	purchases_count: purchasesCountByMember.get(b.member_id) ?? 0,
+waiver_status: (() => {
+  const w =
+    waiverByMemberId.get(b.member_id) ??
+    (m?.email ? waiverByEmail.get(String(m.email).toLowerCase()) : null);
+
+  if (!w) return "missing";
+  if (w.status === "signed") return "signed";
+  if (w.status === "sent") return "sent";
+  return "missing";
+})(),
+
         last_activity_at: lastLedger?.created_at ?? null,
         last_activity: lastLedger
           ? {
