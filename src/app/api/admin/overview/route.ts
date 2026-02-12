@@ -137,14 +137,37 @@ if (lastPass) {
 
 const balance = Number(b.balance ?? 0);
 
+// ----- Waiver status (compute FIRST so flags can use it)
+const waiverStatus: "missing" | "sent" | "signed" = (() => {
+  const w =
+    waiverByMemberId.get(b.member_id) ??
+    (m?.email ? waiverByEmail.get(String(m.email).toLowerCase()) : null);
+
+  if (!w) return "missing";
+  if (w.status === "signed") return "signed";
+  if (w.status === "sent") return "sent";
+  return "missing";
+})();
+
+// ----- Flags (now safe to reference waiverStatus)
 const flags = {
+  // Safety: should never happen, but measurable
   negative_balance: balance < 0,
-  zero_balance: balance === 0,
-  has_credits_no_active_pass: balance > 0 && pass_state !== "active",
+
+  // Member has credits but no active booking link
+  credits_no_active_pass: balance > 0 && pass_state !== "active",
+
+  // Booking pass expired
   pass_expired: pass_state === "expired",
-  no_recent_activity_30d: !lastLedger?.created_at
-    ? true
-    : Date.parse(lastLedger.created_at) <
+
+  // Waiver state
+  waiver_missing: waiverStatus === "missing",
+  waiver_sent: waiverStatus === "sent",
+
+  // No activity in 30 days
+  no_recent_activity_30d:
+    !lastLedger?.created_at ||
+    Date.parse(lastLedger.created_at) <
       Date.now() - 30 * 24 * 60 * 60 * 1000,
 };
 
@@ -160,17 +183,7 @@ const flags = {
         member_created_at: m?.created_at ?? null,
         balance,
 	purchases_count: purchasesCountByMember.get(b.member_id) ?? 0,
-waiver_status: (() => {
-  const w =
-    waiverByMemberId.get(b.member_id) ??
-    (m?.email ? waiverByEmail.get(String(m.email).toLowerCase()) : null);
-
-  if (!w) return "missing";
-  if (w.status === "signed") return "signed";
-  if (w.status === "sent") return "sent";
-  return "missing";
-})(),
-
+	waiver_status: waiverStatus,
         last_activity_at: lastLedger?.created_at ?? null,
         last_activity: lastLedger
           ? {
@@ -207,11 +220,14 @@ waiver_status: (() => {
   members_with_zero: rows.filter((r: any) => (Number(r.balance) || 0) === 0).length,
   members_with_positive: rows.filter((r: any) => (Number(r.balance) || 0) > 0).length,
   triage: {
-  negative_balance: rows.filter((r: any) => r.flags?.negative_balance).length,
-  has_credits_no_active_pass: rows.filter((r: any) => r.flags?.has_credits_no_active_pass).length,
-  pass_expired: rows.filter((r: any) => r.flags?.pass_expired).length,
-  no_recent_activity_30d: rows.filter((r: any) => r.flags?.no_recent_activity_30d).length,
+  credits_no_active_pass: rows.filter((r: any) => r.flags.credits_no_active_pass).length,
+  pass_expired: rows.filter((r: any) => r.flags.pass_expired).length,
+  waiver_missing: rows.filter((r: any) => r.flags.waiver_missing).length,
+  waiver_sent: rows.filter((r: any) => r.flags.waiver_sent).length,
+  no_recent_activity_30d: rows.filter((r: any) => r.flags.no_recent_activity_30d).length,
+  negative_balance: rows.filter((r: any) => r.flags.negative_balance).length,
 },
+
 
 };
 
