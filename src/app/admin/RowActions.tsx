@@ -6,11 +6,12 @@ export function RowActions({
   email,
   memberId,
   waiverStatus,
+  balance,
 }: {
   email: string | null;
   memberId: string;
   waiverStatus?: "missing" | "sent" | "signed";
-balance?: number;
+  balance?: number;
 }) {
   const [busy, setBusy] = useState<null | "booking" | "waiver">(null);
   const [msg, setMsg] = useState<string | null>(null);
