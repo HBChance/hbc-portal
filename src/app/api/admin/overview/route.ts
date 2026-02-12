@@ -11,6 +11,17 @@ function supabaseAdmin() {
     auth: { persistSession: false },
   });
 }
+function isExpired(expiresAt: string | null) {
+  if (!expiresAt) return false;
+  return Date.parse(expiresAt) < Date.now();
+}
+
+function hoursUntil(ts: string | null) {
+  if (!ts) return null;
+  const ms = Date.parse(ts) - Date.now();
+  return ms / (1000 * 60 * 60);
+}
+
 
 export async function GET() {
   const supabase = supabaseAdmin();
@@ -77,6 +88,32 @@ export async function GET() {
       const m = membersById.get(b.member_id);
       const lastLedger = latestLedgerByMember.get(b.member_id) ?? null;
       const lastPass = latestPassByMember.get(b.member_id) ?? null;
+let pass_state: "none" | "active" | "expired" | "consumed" = "none";
+let pass_expires_in_hours: number | null = null;
+
+if (lastPass) {
+  if (lastPass.used_at) pass_state = "consumed";
+  else if (isExpired(lastPass.expires_at ?? null)) pass_state = "expired";
+  else pass_state = "active";
+
+  pass_expires_in_hours = hoursUntil(lastPass.expires_at ?? null);
+}
+
+const balance = Number(b.balance ?? 0);
+
+const flags = {
+  negative_balance: balance < 0,
+  zero_balance: balance === 0,
+  has_credits_no_active_pass: balance > 0 && pass_state !== "active",
+  pass_expiring_soon:
+    pass_state === "active" &&
+    pass_expires_in_hours !== null &&
+    pass_expires_in_hours <= 6,
+  no_recent_activity_30d: !lastLedger?.created_at
+    ? true
+    : Date.parse(lastLedger.created_at) <
+      Date.now() - 30 * 24 * 60 * 60 * 1000,
+};
 
       const fullName = m
         ? `${(m.first_name ?? "").trim()} ${(m.last_name ?? "").trim()}`.trim() || null
@@ -89,7 +126,7 @@ export async function GET() {
         phone: m?.phone ?? null,
         member_created_at: m?.created_at ?? null,
 
-        balance: Number(b.balance) || 0,
+        balance,
 
         last_activity_at: lastLedger?.created_at ?? null,
         last_activity: lastLedger
@@ -99,6 +136,9 @@ export async function GET() {
               reason: lastLedger.reason ?? null,
             }
           : null,
+	pass_state,
+	pass_expires_in_hours,
+	flags,
 
         last_pass: lastPass
           ? {
