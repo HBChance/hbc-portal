@@ -296,11 +296,25 @@ if (!Number.isFinite(credits) || credits <= 0) {
         `https://vffglvixaokvtdrdpvtd.functions.supabase.co/redeem-booking-pass?token=${token}`;
 
 
-      const html = `
-        <p>Thank you for your purchase.</p>
-        <p><a href="${bookingUrl}"><strong>Click here to book your Flintridge Sound Bath</strong></a></p>
-        <p>This link can be used <strong>once</strong> and expires in <strong>48 hours</strong>.</p>
-      `;
+     const html = `
+  <p>Thank you for your purchase.</p>
+
+  <p>
+    <a href="${bookingUrl}">
+      <strong>Click here to book your Flintridge Sound Bath</strong>
+    </a>
+  </p>
+
+  <p>
+    This link can be clicked <strong>once</strong> and expires <strong>30 days</strong> from when you received this email.
+  </p>
+
+  <p>
+    If you click the link and can’t complete booking, email 
+    <a href="mailto:help@happensbychance.com">help@happensbychance.com</a> 
+    with a description of what happened and we’ll resend a new link to this address.
+  </p>
+`;
 
       // Send email via Edge Function (Resend)
       await fetch(
