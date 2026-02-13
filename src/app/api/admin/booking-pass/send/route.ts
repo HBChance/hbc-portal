@@ -128,10 +128,29 @@ const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       `https://vffglvixaokvtdrdpvtd.functions.supabase.co/redeem-booking-pass?token=${token}`;
 
     const html = `
-      <p>Here is your booking link.</p>
-      <p><a href="${bookingUrl}"><strong>Click here to book your Flintridge Sound Bath</strong></a></p>
-      <p>This link can be used <strong>once</strong> and expires in <strong>48 hours</strong>.</p>
-    `;
+  <p>Here is your private booking link.</p>
+
+  <p>
+    <a href="${bookingUrl}">
+      <strong>Click here to book your Flintridge Sound Bath</strong>
+    </a>
+  </p>
+
+  <p>
+    This link expires <strong>30 days from the time you receive this email</strong>.
+  </p>
+
+  <p>
+    ⚠️ The link can only be used <strong>once</strong>.  
+    Please be ready to complete your booking when you click it.
+  </p>
+
+  <p>
+    If you experience any issues, email  
+    <strong>help@happensbychance.com</strong> with a description of what happened and we will resend your booking link.
+  </p>
+`;
+
 
     // ---- Send email via Edge Function (Resend)
     // Uses the same mechanism as your Stripe webhook.
@@ -145,7 +164,7 @@ const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
         },
         body: JSON.stringify({
           to: email,
-          subject: "Your booking link — Happens By Chance",
+          subject: "[ADMIN TEST] booking link (should be 30 days)",
           html,
         }),
       }
