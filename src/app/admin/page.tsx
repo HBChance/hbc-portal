@@ -52,7 +52,15 @@ purchases_count: number;
 
 function fmt(s: string | null | undefined) {
   if (!s) return "—";
-  return new Date(s).toLocaleString();
+
+  return new Date(s).toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function Badge({
