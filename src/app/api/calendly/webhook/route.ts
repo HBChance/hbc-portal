@@ -72,16 +72,10 @@ function parseCalendly(body: any) {
   calendlyEventUri,
   startTime,
   endTime,
-
-  // Booking pass token (required for RSVP consumption logic)
-  token:
-    (payload?.questions_and_answers ?? [])
-      .find((q: any) => (q?.question ?? "").toLowerCase().includes("token"))
-      ?.answer ?? null,
-
   topKeys: Object.keys(body ?? {}),
   payloadKeys: payload ? Object.keys(payload) : [],
 };
+}
 
 function isInsufficientCredits(message: string | null | undefined) {
   if (!message) return false;
@@ -198,11 +192,11 @@ export async function POST(req: Request) {
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
 // Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
-if (parsed.token) {
+if (token) {
   const { error: passUpdErr } = await supabase
     .from("booking_passes")
     .update({ used_at: new Date().toISOString() })
-    .eq("token", parsed.token)
+    .eq("token", token)
     .is("used_at", null);
 
   if (passUpdErr) {
