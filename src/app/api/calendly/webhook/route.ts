@@ -66,16 +66,22 @@ function parseCalendly(body: any) {
     null;
 
   return {
-    eventType,
-    inviteeEmail,
-    calendlyInviteeUri,
-    calendlyEventUri,
-    startTime,
-    endTime,
-    topKeys: Object.keys(body ?? {}),
-    payloadKeys: payload ? Object.keys(payload) : [],
-  };
-}
+  eventType,
+  inviteeEmail,
+  calendlyInviteeUri,
+  calendlyEventUri,
+  startTime,
+  endTime,
+
+  // Booking pass token (required for RSVP consumption logic)
+  token:
+    (payload?.questions_and_answers ?? [])
+      .find((q: any) => (q?.question ?? "").toLowerCase().includes("token"))
+      ?.answer ?? null,
+
+  topKeys: Object.keys(body ?? {}),
+  payloadKeys: payload ? Object.keys(payload) : [],
+};
 
 function isInsufficientCredits(message: string | null | undefined) {
   if (!message) return false;
