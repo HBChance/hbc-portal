@@ -101,8 +101,8 @@ export async function POST(req: Request) {
     const token = crypto.randomBytes(32).toString("base64url"); // URL-safe
     const tokenHash = sha256Hex(token);
 
-    // 48 hours
-    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    // 30 days
+const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // ---- Insert booking pass row (token is NOT NULL)
     const { error: insertErr } = await admin.from("booking_passes").insert({

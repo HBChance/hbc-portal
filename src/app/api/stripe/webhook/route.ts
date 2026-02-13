@@ -281,7 +281,7 @@ if (!Number.isFinite(credits) || credits <= 0) {
 
       const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
       const token = Buffer.from(tokenBytes).toString("base64url"); // URL-safe
-      const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(); // 48h
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
       await supabaseAdmin.from("booking_passes").insert({
         token,

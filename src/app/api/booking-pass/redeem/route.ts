@@ -40,17 +40,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "This booking link has expired." }, { status: 410 });
     }
 
-    // 2) Mark used (idempotent: only updates if still unused)
-    const { error: updErr } = await supabaseAdmin
-      .from("booking_passes")
-      .update({ used_at: new Date().toISOString() })
-      .eq("id", pass.id)
-      .is("used_at", null);
-
-    if (updErr) {
-      return NextResponse.json({ error: "Could not redeem booking link. Please try again." }, { status: 500 });
-    }
-
+    
     // 3) Optional prefill Calendly (email only; name can be added later)
     const redirectUrl = `${CALENDLY_BASE}?email=${encodeURIComponent(pass.email)}`;
 

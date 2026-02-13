@@ -191,6 +191,18 @@ export async function POST(req: Request) {
            // Always 200 so Calendly doesn't hammer retries forever (your current behavior)
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
+// Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
+if (parsed.token) {
+  const { error: passUpdErr } = await supabase
+    .from("booking_passes")
+    .update({ used_at: new Date().toISOString() })
+    .eq("token", parsed.token)
+    .is("used_at", null);
+
+  if (passUpdErr) {
+    console.error("[calendly] failed to mark booking pass used", passUpdErr.message);
+  }
+}
 
     // ✅ Redemption succeeded — now we debug waiver triggering (no behavior change yet)
         // Waiver send (Phase 1D) — only after credited booking success
