@@ -14,11 +14,13 @@ purchases_count: number;
   members_with_zero: number;
   members_with_positive: number;
   triage: {
-    negative_balance: number;
-    has_credits_no_active_pass: number;
-    pass_expired: number;
-    no_recent_activity_30d: number;
-  };
+  credits_no_active_pass: number;
+  pass_expired: number;
+  waiver_missing: number;
+  waiver_sent: number;
+  no_recent_activity_30d: number;
+  negative_balance: number;
+};
 };
   rows: Array<{
     member_id: string;
@@ -149,58 +151,56 @@ export default async function AdminHome() {
       </div>
 
       {/* topline stats */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 10,
-        }}
-      >
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Members</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.member_count}</div>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Total Credits</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.total_credits}</div>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Zero Balance</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.members_with_zero}</div>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Has Credits</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.members_with_positive}</div>
-        </div>
-      </div>
-      {/* triage panel */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 10,
-        }}
-      >
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Credits & no active pass</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage?.has_credits_no_active_pass ?? 0}</div>
-        </div>
+      {/* topline stats + triage */}
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 10,
+  }}
+>
+  {/* topline */}
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>Members</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.member_count}</div>
+  </div>
 
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Pass expiring ≤ 6h</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.pass_expired ?? 0}</div>
-        </div>
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>Total Credits</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.total_credits}</div>
+  </div>
 
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>No activity (30d)</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.no_recent_activity_30d ?? 0}</div>
-        </div>
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>Zero Balance</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.members_with_zero}</div>
+  </div>
 
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Negative balance</div>
-          <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.negative_balance ?? 0}</div>
-        </div>
-      </div>
+  {/* triage */}
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>Credits & no active pass</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.credits_no_active_pass ?? 0}</div>
+  </div>
+
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>Pass expired</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.pass_expired ?? 0}</div>
+  </div>
+
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>Waiver missing</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.waiver_missing ?? 0}</div>
+  </div>
+
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>Waiver sent</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.waiver_sent ?? 0}</div>
+  </div>
+
+  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b" }}>No activity (30d)</div>
+    <div style={{ fontSize: 26, fontWeight: 700 }}>{data.stats.triage.no_recent_activity_30d ?? 0}</div>
+  </div>
+</div>
 
       {/* scan table */}
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
@@ -290,7 +290,9 @@ export default async function AdminHome() {
   email={r.email}
   memberId={r.member_id}
   waiverStatus={(r as any).waiver_status}
+  balance={Number(r.balance) || 0}
 />
+
 		</td>
 
                   </tr>
