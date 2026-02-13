@@ -164,7 +164,7 @@ const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
         },
         body: JSON.stringify({
           to: email,
-          subject: "[ADMIN TEST] booking link (should be 30 days)",
+          subject: "Your booking link — Happens By Chance Sound Healing",
           html,
         }),
       }
