@@ -13,7 +13,8 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  const [busy, setBusy] = useState<null | "booking" | "waiver">(null);
+  type Busy = "booking" | "waiver" | "credit" | null;
+const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   async function postJson(url: string, body: any) {
