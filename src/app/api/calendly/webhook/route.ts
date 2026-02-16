@@ -65,23 +65,22 @@ function parseCalendly(body: any) {
     payload?.event?.end_time ??
     null;
 
+   const token =
+    (payload?.tracking?.utm_content as string | undefined) ??
+    (payload?.tracking?.utm_term as string | undefined) ??
+    null;
+
   return {
-  eventType,
-  inviteeEmail,
-  calendlyInviteeUri,
-  calendlyEventUri,
-  startTime,
-  endTime,
-
-  // pulled from Calendly "tracking" (UTMs)
-  bookingPassId:
-    payload?.tracking?.utm_content
-      ? String(payload.tracking.utm_content)
-      : null,
-
-  topKeys: Object.keys(body ?? {}),
-  payloadKeys: payload ? Object.keys(payload) : [],
-};
+    eventType,
+    inviteeEmail,
+    calendlyInviteeUri,
+    calendlyEventUri,
+    startTime,
+    endTime,
+    token,
+    topKeys: Object.keys(body ?? {}),
+    payloadKeys: payload ? Object.keys(payload) : [],
+  };
 }
 
 function isInsufficientCredits(message: string | null | undefined) {
@@ -121,6 +120,29 @@ console.log("[calendly] parsed identity", {
   calendlyEventUri: parsed.calendlyEventUri,
   questions: (parsed as any).questions ?? null,
 });
+
+// Prefer redeeming against the purchaser when a booking-pass is used
+let redeemMemberId: string | null = null;
+
+if (parsed.bookingPassId) {
+  const { data: passRow, error: passErr } = await supabase
+    .from("booking_passes")
+    .select("member_id, used_at, expires_at")
+    .eq("id", parsed.bookingPassId)
+    .maybeSingle();
+
+  if (passErr) console.error("[calendly] booking_pass lookup failed", passErr.message);
+
+  if (passRow?.member_id) {
+    if (passRow.used_at) {
+      console.warn("[calendly] booking_pass already used", { bookingPassId: parsed.bookingPassId });
+    } else if (passRow.expires_at && Date.parse(passRow.expires_at) <= Date.now()) {
+      console.warn("[calendly] booking_pass expired", { bookingPassId: parsed.bookingPassId });
+    } else {
+      redeemMemberId = passRow.member_id;
+    }
+  }
+}
 
   console.log(
     "[calendly] received:",
@@ -207,11 +229,11 @@ console.log("[calendly] parsed identity", {
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
 // Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
-if (parsed.bookingPassId) {
+if (parsed.token) {
   const { error: passUpdErr } = await supabase
     .from("booking_passes")
     .update({ used_at: new Date().toISOString() })
-    .eq("id", parsed.bookingPassId)
+    .eq("token", parsed.token)
     .is("used_at", null);
 
   if (passUpdErr) {
