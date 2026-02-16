@@ -106,6 +106,14 @@ export async function POST(req: Request) {
   }
 
   const parsed = parseCalendly(body);
+console.log("[calendly] parsed identity", {
+  eventType: parsed.eventType,
+  inviteeEmail: parsed.inviteeEmail,
+  inviteeName: (parsed as any).inviteeName ?? null,
+  calendlyInviteeUri: parsed.calendlyInviteeUri,
+  calendlyEventUri: parsed.calendlyEventUri,
+  questions: (parsed as any).questions ?? null,
+});
 
   console.log(
     "[calendly] received:",
