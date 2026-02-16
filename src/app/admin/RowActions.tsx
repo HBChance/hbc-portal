@@ -32,6 +32,39 @@ export function RowActions({
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button
         type="button"
+        disabled={busy !== null}
+        onClick={async () => {
+          setMsg(null);
+          setBusy("credit");
+          try {
+            await postJson("/api/admin/credits/add", {
+              member_id: memberId,
+              quantity: 1,
+              reason: "admin +1 credit",
+            });
+            setMsg("+1 credit added");
+            window.location.reload();
+          } catch (e: any) {
+            setMsg(e?.message || "Failed");
+          } finally {
+            setBusy(null);
+          }
+        }}
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 10,
+          padding: "6px 10px",
+          fontSize: 12,
+          background: "white",
+          opacity: busy !== null ? 0.5 : 1,
+          cursor: busy !== null ? "not-allowed" : "pointer",
+        }}
+        title="Add +1 credit (ledger grant)"
+      >
+        +1 credit
+      </button>
+      <button
+        type="button"
         disabled={!email || busy !== null || (balance ?? 0) < 1}
         onClick={async () => {
           if (!email) return;
