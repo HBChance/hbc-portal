@@ -72,6 +72,13 @@ function parseCalendly(body: any) {
   calendlyEventUri,
   startTime,
   endTime,
+
+  // pulled from Calendly "tracking" (UTMs)
+  bookingPassId:
+    payload?.tracking?.utm_content
+      ? String(payload.tracking.utm_content)
+      : null,
+
   topKeys: Object.keys(body ?? {}),
   payloadKeys: payload ? Object.keys(payload) : [],
 };
@@ -200,18 +207,17 @@ console.log("[calendly] parsed identity", {
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
 // Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
-if (token) {
+if (parsed.bookingPassId) {
   const { error: passUpdErr } = await supabase
     .from("booking_passes")
     .update({ used_at: new Date().toISOString() })
-    .eq("token", token)
+    .eq("id", parsed.bookingPassId)
     .is("used_at", null);
 
   if (passUpdErr) {
     console.error("[calendly] failed to mark booking pass used", passUpdErr.message);
   }
 }
-
     // ✅ Redemption succeeded — now we debug waiver triggering (no behavior change yet)
         // Waiver send (Phase 1D) — only after credited booking success
     try {

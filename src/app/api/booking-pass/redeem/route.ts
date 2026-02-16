@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     // 1) Fetch pass
     const { data: pass, error: fetchErr } = await supabaseAdmin
       .from("booking_passes")
-      .select("id, email, used_at, expires_at")
+      .select("id, member_id, email, used_at, expires_at")
       .eq("token", t)
       .maybeSingle();
 
@@ -42,7 +42,12 @@ export async function POST(req: Request) {
 
     
     // 3) Optional prefill Calendly (email only; name can be added later)
-    const redirectUrl = `${CALENDLY_BASE}?email=${encodeURIComponent(pass.email)}`;
+    const redirectUrl =
+  const redirectUrl =
+  `${CALENDLY_BASE}?email=${encodeURIComponent(pass.email)}` +
+  `&utm_source=hbc` +
+  `&utm_medium=booking_pass` +
+  `&utm_content=${encodeURIComponent(pass.id)}`;
 
     return NextResponse.json({ redirect_url: redirectUrl }, { status: 200 });
   } catch (e: any) {
