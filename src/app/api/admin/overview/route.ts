@@ -95,7 +95,7 @@ const WAIVER_YEAR = new Date().getFullYear();
 
 const { data: waivers, error: wErr } = await supabase
   .from("waivers")
-  .select("member_id,recipient_email,status,sent_at,signed_at,waiver_year")
+  .select("member_id,recipient_email,status,sent_at,signed_at,waiver_year,calendly_invitee_uri,attendee_name")
   .eq("waiver_year", WAIVER_YEAR);
 
 if (wErr) {
@@ -104,10 +104,14 @@ if (wErr) {
 
 const waiverByMemberId = new Map<string, any>();
 const waiverByEmail = new Map<string, any>();
+const waiverByInviteeUri = new Map<string, any>();
 
 for (const w of waivers ?? []) {
   if (w.member_id) waiverByMemberId.set(w.member_id, w);
   if (w.recipient_email) waiverByEmail.set(String(w.recipient_email).toLowerCase(), w);
+
+  const uri = String((w as any).calendly_invitee_uri ?? "").trim();
+  if (uri) waiverByInviteeUri.set(uri, w);
 }
 
   // 4) Latest booking pass per member
@@ -154,7 +158,13 @@ const inviteeEmail = String(r.invitee_email ?? "").toLowerCase().trim();
 const purchaserName = purchaser
   ? `${String(purchaser.first_name ?? "").trim()} ${String(purchaser.last_name ?? "").trim()}`.trim()
   : "";
-const inviteeName = String((r as any).invitee_name ?? "").trim();
+const uriKey = String((r as any).calendly_invitee_uri ?? "").trim();
+const waiverRowForInvitee = uriKey ? waiverByInviteeUri.get(uriKey) : null;
+
+const inviteeName =
+  String((r as any).invitee_name ?? "").trim() ||
+  String((waiverRowForInvitee as any)?.attendee_name ?? "").trim() ||
+  "";
 
 // If the RSVP is for the purchaser themselves (same email AND no distinct guest name), ignore it
 if (
@@ -166,7 +176,10 @@ if (
   continue;
 }
 
-const startIso = (r as any).event_start_at ?? null;
+const startIso =
+  (r as any).event_start_at ??
+  (r as any).calendly_event_start ??
+  null;
 const startMs = startIso ? Date.parse(startIso) : null;
 if (startMs && startMs < cutoffMs) continue;
 
@@ -190,14 +203,14 @@ if (startMs && startMs < cutoffMs) continue;
   if (looksLikeSelf) continue;
 
   const arr = guestsByMember.get(r.member_id) ?? [];
-  arr.push({
-    calendly_invitee_uri: (r as any).calendly_invitee_uri ?? null,
-    invitee_email: r.invitee_email ?? null,
-    invitee_name: (r as any).invitee_name ?? null,
-    event_start_at: startIso,
-    waiver_status: (r as any).waiver_status ?? undefined,
-    status: r.status ?? "created",
-  });
+arr.push({
+  calendly_invitee_uri: (r as any).calendly_invitee_uri ?? null,
+  invitee_email: r.invitee_email ?? null,
+  invitee_name: inviteeName || null,
+  event_start_at: startIso,
+  waiver_status: ((waiverRowForInvitee as any)?.status as any) ?? undefined,
+  status: r.status ?? "created",
+});
   guestsByMember.set(r.member_id, arr);
 }
 

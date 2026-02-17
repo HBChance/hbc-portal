@@ -112,6 +112,11 @@ export async function POST(req: Request) {
   }
 
   const parsed = parseCalendly(body);
+// Attendee name from Calendly booking form (guest/minor name lives here)
+const attendeeName =
+  (String(body?.payload?.name ?? "").trim() ||
+    `${String(body?.payload?.first_name ?? "").trim()} ${String(body?.payload?.last_name ?? "").trim()}`.trim() ||
+    null);
 
 console.log("[calendly] parsed identity", {
   eventType: parsed.eventType,
