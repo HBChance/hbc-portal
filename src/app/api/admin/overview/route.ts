@@ -47,47 +47,18 @@ export async function GET() {
     return NextResponse.json({ error: memErr.message }, { status: 500 });
   }
   // 2.5) Recent/upcoming RSVP guests (grouped by purchaser member_id)
-  const { data: rsvps, error: rsvpErr } = await supabase
-    .from("rsvps")
-    .select("member_id,invitee_email,invitee_name,calendly_event_start,status")
-    .in("member_id", memberIds)
-    .order("calendly_event_start", { ascending: false })
-    .limit(5000);
+const { data: rsvps, error: rsvpErr } = await supabase
+  .from("rsvps")
+  .select("member_id,calendly_invitee_uri,invitee_email,invitee_name,calendly_event_start,status")
+  .in("member_id", memberIds)
+  .order("calendly_event_start", { ascending: false })
+  .limit(5000);
 
-  if (rsvpErr) {
-    return NextResponse.json({ error: rsvpErr.message }, { status: 500 });
-  }
+if (rsvpErr) {
+  return NextResponse.json({ error: rsvpErr.message }, { status: 500 });
+}
 
-  const guestsByMember = new Map<
-    string,
-    Array<{
-      invitee_email: string | null;
-      invitee_name: string | null;
-      calendly_event_start: string | null;
-      status: string;
-    }>
-  >();
-
-  // Keep it lightweight: show upcoming + last 60 days
-  const cutoffMs = Date.now() - 60 * 24 * 60 * 60 * 1000;
-
-  for (const r of rsvps ?? []) {
-    if (!r.member_id) continue;
-    if (r.status === "canceled") continue;
-
-    const startMs = r.calendly_event_start ? Date.parse(r.calendly_event_start) : null;
-    if (startMs && startMs < cutoffMs) continue;
-
-    const arr = guestsByMember.get(r.member_id) ?? [];
-    arr.push({
-      invitee_email: r.invitee_email ?? null,
-      invitee_name: (r as any).invitee_name ?? null,
-      calendly_event_start: r.calendly_event_start ?? null,
-      status: r.status ?? "created",
-    });
-    guestsByMember.set(r.member_id, arr);
-  }
-  // 3) Latest ledger entry per member (for “last activity”)
+    // 3) Latest ledger entry per member (for “last activity”)
   const { data: ledgerRows, error: ledErr } = await supabase
     .from("credits_ledger")
     .select("member_id,entry_type,quantity,reason,created_at")
@@ -157,6 +128,79 @@ for (const w of waivers ?? []) {
   }
 
   const membersById = new Map((members ?? []).map((m: any) => [m.id, m]));
+const guestsByMember = new Map<
+  string,
+  Array<{
+    calendly_invitee_uri: string | null;
+    invitee_email: string | null;
+    invitee_name: string | null;
+    event_start_at: string | null;
+    waiver_status?: "missing" | "sent" | "signed";
+    status: string;
+  }>
+>();
+
+// Keep it lightweight: show upcoming + last 60 days
+const cutoffMs = Date.now() - 60 * 24 * 60 * 60 * 1000;
+
+for (const r of rsvps ?? []) {
+  if (!r.member_id) continue;
+  if (r.status === "canceled") continue;
+
+// Skip showing the member as their own "guest"
+const purchaser = membersById.get(r.member_id);
+const purchaserEmail = String(purchaser?.email ?? "").toLowerCase().trim();
+const inviteeEmail = String(r.invitee_email ?? "").toLowerCase().trim();
+const purchaserName = purchaser
+  ? `${String(purchaser.first_name ?? "").trim()} ${String(purchaser.last_name ?? "").trim()}`.trim()
+  : "";
+const inviteeName = String((r as any).invitee_name ?? "").trim();
+
+// If the RSVP is for the purchaser themselves (same email AND no distinct guest name), ignore it
+if (
+  purchaserEmail &&
+  inviteeEmail &&
+  purchaserEmail === inviteeEmail &&
+  (!inviteeName || (purchaserName && inviteeName.toLowerCase() === purchaserName.toLowerCase()))
+) {
+  continue;
+}
+
+  const startIso = (r as any).calendly_event_start ?? (r as any).event_start_at ?? null;
+  const startMs = startIso ? Date.parse(startIso) : null;
+  if (startMs && startMs < cutoffMs) continue;
+
+  // Identify “self” RSVP (so we can hide it from the Guest dropdown)
+  const m = membersById.get(r.member_id);
+  const memberEmailLower = String(m?.email ?? "").toLowerCase().trim();
+  const memberNameLower = `${String(m?.first_name ?? "").trim()} ${String(m?.last_name ?? "").trim()}`
+    .trim()
+    .toLowerCase();
+
+  const inviteeEmailLower = String(r.invitee_email ?? "").toLowerCase().trim();
+  const inviteeNameLower = String((r as any).invitee_name ?? "").trim().toLowerCase();
+
+  // Treat as “self” if:
+  // - invitee_name matches member full name, OR
+  // - invitee_email matches member email AND invitee_name is missing
+  const looksLikeSelf =
+    (!!memberNameLower && !!inviteeNameLower && inviteeNameLower === memberNameLower) ||
+    (!!memberEmailLower && !!inviteeEmailLower && inviteeEmailLower === memberEmailLower && !inviteeNameLower);
+
+  if (looksLikeSelf) continue;
+
+  const arr = guestsByMember.get(r.member_id) ?? [];
+  arr.push({
+    calendly_invitee_uri: (r as any).calendly_invitee_uri ?? null,
+    invitee_email: r.invitee_email ?? null,
+    invitee_name: (r as any).invitee_name ?? null,
+    event_start_at: startIso,
+    waiver_status: (r as any).waiver_status ?? undefined,
+    status: r.status ?? "created",
+  });
+  guestsByMember.set(r.member_id, arr);
+}
+
 // 4.5) Stripe purchase counts (count grant rows whose reason starts with "stripe")
 
   const rows = (balances ?? [])
