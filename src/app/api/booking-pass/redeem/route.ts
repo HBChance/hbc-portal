@@ -41,15 +41,13 @@ export async function POST(req: Request) {
     }
 
     
-    // 3) Optional prefill Calendly (email only; name can be added later)
-    const redirectUrl =
-  const redirectUrl =
+   // 3) Optional prefill Calendly (email only; name can be added later)
+const redirectUrl =
   `${CALENDLY_BASE}?email=${encodeURIComponent(pass.email)}` +
   `&utm_source=hbc` +
-  `&utm_medium=booking_pass` +
-  `&utm_content=${encodeURIComponent(pass.id)}`;
+  `&utm_content=${encodeURIComponent(t)}`;
 
-    return NextResponse.json({ redirect_url: redirectUrl }, { status: 200 });
+return NextResponse.json({ redirect_url: redirectUrl }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
   }
