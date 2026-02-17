@@ -46,7 +46,47 @@ export async function GET() {
   if (memErr) {
     return NextResponse.json({ error: memErr.message }, { status: 500 });
   }
+  // 2.5) Recent/upcoming RSVP guests (grouped by purchaser member_id)
+  const { data: rsvps, error: rsvpErr } = await supabase
+    .from("rsvps")
+    .select("member_id,invitee_email,invitee_name,calendly_event_start,status")
+    .in("member_id", memberIds)
+    .order("calendly_event_start", { ascending: false })
+    .limit(5000);
 
+  if (rsvpErr) {
+    return NextResponse.json({ error: rsvpErr.message }, { status: 500 });
+  }
+
+  const guestsByMember = new Map<
+    string,
+    Array<{
+      invitee_email: string | null;
+      invitee_name: string | null;
+      calendly_event_start: string | null;
+      status: string;
+    }>
+  >();
+
+  // Keep it lightweight: show upcoming + last 60 days
+  const cutoffMs = Date.now() - 60 * 24 * 60 * 60 * 1000;
+
+  for (const r of rsvps ?? []) {
+    if (!r.member_id) continue;
+    if (r.status === "canceled") continue;
+
+    const startMs = r.calendly_event_start ? Date.parse(r.calendly_event_start) : null;
+    if (startMs && startMs < cutoffMs) continue;
+
+    const arr = guestsByMember.get(r.member_id) ?? [];
+    arr.push({
+      invitee_email: r.invitee_email ?? null,
+      invitee_name: (r as any).invitee_name ?? null,
+      calendly_event_start: r.calendly_event_start ?? null,
+      status: r.status ?? "created",
+    });
+    guestsByMember.set(r.member_id, arr);
+  }
   // 3) Latest ledger entry per member (for “last activity”)
   const { data: ledgerRows, error: ledErr } = await supabase
     .from("credits_ledger")
@@ -184,6 +224,7 @@ const flags = {
         balance,
 	purchases_count: purchasesCountByMember.get(b.member_id) ?? 0,
 	waiver_status: waiverStatus,
+	guests: guestsByMember.get(b.member_id) ?? [],
         last_activity_at: lastLedger?.created_at ?? null,
         last_activity: lastLedger
           ? {

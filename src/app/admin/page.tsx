@@ -23,31 +23,41 @@ purchases_count: number;
 };
 };
   rows: Array<{
-    member_id: string;
-    email: string | null;
-    full_name: string | null;
-    member_created_at: string | null;
+  member_id: string;
+  email: string | null;
+  full_name: string | null;
+  member_created_at: string | null;
 
-    balance: number;
-    balance_updated_at?: string | null;
+  balance: number;
+  balance_updated_at?: string | null;
 
-    last_activity_at: string | null;
-    last_activity: null | {
-      delta: number;
-      reason: string | null;
-      source_type: string | null;
-      source_id: string | null;
-    };
+  purchases_count?: number;
+  waiver_status?: "missing" | "sent" | "signed";
 
-    last_pass: null | {
-      created_at: string;
-      expires_at: string | null;
-      consumed_at: string | null;
-      used_at?: string | null; // tolerate older field names
-	waiver_status?: "missing" | "sent" | "signed";
+  last_activity_at: string | null;
+  last_activity: null | {
+    delta: number;
+    reason: string | null;
+    source_type: string | null;
+    source_id: string | null;
+  };
 
-    };
+  last_pass: null | {
+    created_at: string;
+    expires_at: string | null;
+    consumed_at: string | null;
+    used_at?: string | null;
+  };
+
+  guests?: Array<{
+    calendly_invitee_uri: string | null;
+    invitee_email: string | null;
+    invitee_name: string | null;
+    event_start_at: string | null;
+    waiver_status?: "missing" | "sent" | "signed";
+    status: string;
   }>;
+}>;
 };
 
 function fmt(s: string | null | undefined) {
@@ -258,6 +268,46 @@ export default async function AdminHome() {
                     <td style={{ padding: "10px 12px" }}>
                       <div style={{ fontWeight: 700 }}>{r.full_name ?? "—"}</div>
                       <div style={{ fontSize: 12, color: "#64748b" }}>{r.email ?? r.member_id}</div>
+{Array.isArray((r as any).guests) && (r as any).guests.length > 0 && (
+  <details style={{ marginTop: 6 }}>
+    <summary style={{ cursor: "pointer", fontSize: 12, color: "#64748b" }}>
+      Guests ({(r as any).guests.length})
+    </summary>
+
+    <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+      {(r as any).guests.map((g: any) => (
+        <div
+          key={g.calendly_invitee_uri ?? `${g.invitee_email}-${g.event_start_at}`}
+          style={{
+            padding: 8,
+            border: "1px solid #e5e7eb",
+            borderRadius: 10,
+            background: "#fff",
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 12 }}>
+            {g.invitee_name ?? "Guest"}
+          </div>
+          <div style={{ fontSize: 12, color: "#64748b" }}>
+            {g.invitee_email ?? "—"}
+          </div>
+          <div style={{ fontSize: 12, color: "#64748b" }}>
+            {fmt(g.event_start_at ?? null)}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            {g.waiver_status === "signed" ? (
+              <Badge tone="green">Waiver Signed</Badge>
+            ) : g.waiver_status === "sent" ? (
+              <Badge tone="blue">Waiver Sent</Badge>
+            ) : (
+              <Badge tone="amber">Waiver Missing</Badge>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  </details>
+)}
                     </td>
 
                     <td style={{ padding: "10px 12px" }}>
