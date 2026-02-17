@@ -112,20 +112,46 @@ export async function POST(req: Request) {
   }
 
   const parsed = parseCalendly(body);
-  console.log(
-    "[calendly] received:",
-    JSON.stringify({
-      eventType: parsed.eventType,
-      inviteeEmail: parsed.inviteeEmail,
-      startTime: parsed.startTime,
-      hasInviteeUri: !!parsed.calendlyInviteeUri,
-      hasEventUri: !!parsed.calendlyEventUri,
-      topKeys: parsed.topKeys,
-      payloadKeys: parsed.payloadKeys,
-    })
-  );
 
-  const supabase = createSupabaseAdminClient();
+console.log("[calendly] parsed identity", {
+  eventType: parsed.eventType,
+  inviteeEmail: parsed.inviteeEmail,
+  calendlyInviteeUri: parsed.calendlyInviteeUri,
+  calendlyEventUri: parsed.calendlyEventUri,
+  token: parsed.token ?? null,
+  topKeys: parsed.topKeys,
+  payloadKeys: parsed.payloadKeys,
+});
+
+const supabase = createSupabaseAdminClient();
+
+// Default: redeem against the invitee (normal flow)
+let redeemEmail = parsed.inviteeEmail;
+
+// If booking-pass token exists, redeem against the PURCHASER email (booking_pass.email)
+if (parsed.token) {
+  const { data: passRow, error: passErr } = await supabase
+    .from("booking_passes")
+    .select("email, used_at, expires_at")
+    .eq("token", parsed.token)
+    .maybeSingle();
+
+  if (passErr) {
+    console.error("[calendly] booking_pass lookup failed", passErr.message);
+  } else if (!passRow) {
+    console.warn("[calendly] booking_pass not found for token", { token: parsed.token });
+  } else if (passRow.used_at) {
+    console.warn("[calendly] booking_pass already used", { token: parsed.token });
+  } else if (passRow.expires_at && Date.parse(passRow.expires_at) <= Date.now()) {
+    console.warn("[calendly] booking_pass expired", { token: parsed.token });
+  } else if (passRow.email) {
+    redeemEmail = String(passRow.email).toLowerCase().trim();
+  }
+}
+
+// We’ll need this later in the success path to correct RSVP guest email
+// (RPC probably records invitee_email = redeemEmail)
+const guestEmail = parsed.inviteeEmail;
 
   try {
     if (parsed.eventType === "invitee.created") {
@@ -360,7 +386,20 @@ if (parsed.token) {
       // swallow error so Calendly still gets 200 (no retry storm)
     }
 
+// If the booking-pass flow was used, the RPC probably wrote invitee_email = redeemEmail.
+// Correct the RSVP row to reflect the actual guest attendee email from Calendly.
+if (parsed.calendlyInviteeUri && guestEmail && redeemEmail && guestEmail !== redeemEmail) {
+  const { error: rsvpFixErr } = await supabase
+    .from("rsvps")
+    .update({ invitee_email: guestEmail })
+    .eq("calendly_invitee_uri", parsed.calendlyInviteeUri);
 
+  if (rsvpFixErr) {
+    console.error("[calendly] failed to update RSVP invitee_email to guest", rsvpFixErr.message);
+  } else {
+    console.log("[calendly] RSVP invitee_email corrected to guest", { guestEmail });
+  }
+}
     return jsonResponse({ ok: true, redeemed_rsvp_id: data }, 200);
   }
 
