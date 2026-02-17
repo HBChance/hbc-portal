@@ -46,12 +46,12 @@ export async function GET() {
   if (memErr) {
     return NextResponse.json({ error: memErr.message }, { status: 500 });
   }
-  // 2.5) Recent/upcoming RSVP guests (grouped by purchaser member_id)
+// 2.5) Recent/upcoming RSVP guests (grouped by purchaser member_id)
 const { data: rsvps, error: rsvpErr } = await supabase
   .from("rsvps")
-  .select("member_id,calendly_invitee_uri,invitee_email,invitee_name,calendly_event_start,status")
+  .select("member_id,calendly_invitee_uri,invitee_email,invitee_name,event_start_at,status")
   .in("member_id", memberIds)
-  .order("calendly_event_start", { ascending: false })
+  .order("event_start_at", { ascending: false })
   .limit(5000);
 
 if (rsvpErr) {
@@ -166,9 +166,9 @@ if (
   continue;
 }
 
-  const startIso = (r as any).calendly_event_start ?? (r as any).event_start_at ?? null;
-  const startMs = startIso ? Date.parse(startIso) : null;
-  if (startMs && startMs < cutoffMs) continue;
+const startIso = (r as any).event_start_at ?? null;
+const startMs = startIso ? Date.parse(startIso) : null;
+if (startMs && startMs < cutoffMs) continue;
 
   // Identify “self” RSVP (so we can hide it from the Guest dropdown)
   const m = membersById.get(r.member_id);
