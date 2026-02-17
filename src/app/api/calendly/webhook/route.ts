@@ -169,29 +169,6 @@ const guestEmail = parsed.inviteeEmail;
         });
         return jsonResponse({ ok: true, ignored: "missing_fields_created" }, 200);
       }
-// If booking-pass token exists, redeem credits against the PURCHASER email (booking_pass.email),
-// while keeping RSVP/waiver tied to the guest (parsed.inviteeEmail).
-let redeemEmail = parsed.inviteeEmail;
-
-if (parsed.token) {
-  const { data: passRow, error: passErr } = await supabase
-    .from("booking_passes")
-    .select("email, used_at, expires_at")
-    .eq("token", parsed.token)
-    .maybeSingle();
-
-  if (passErr) {
-    console.error("[calendly] booking_pass lookup failed", passErr.message);
-  } else if (!passRow) {
-    console.warn("[calendly] booking_pass not found for token", { token: parsed.token });
-  } else if (passRow.used_at) {
-    console.warn("[calendly] booking_pass already used", { token: parsed.token });
-  } else if (passRow.expires_at && Date.parse(passRow.expires_at) <= Date.now()) {
-    console.warn("[calendly] booking_pass expired", { token: parsed.token });
-  } else if (passRow.email) {
-    redeemEmail = String(passRow.email).toLowerCase().trim();
-  }
-}
       const { data, error } = await supabase.rpc("redeem_credit_for_calendly", {
         p_email: redeemEmail,
         p_calendly_event_uri: parsed.calendlyEventUri,
@@ -256,50 +233,67 @@ if (parsed.token) {
     console.error("[calendly] failed to mark booking pass used", passUpdErr.message);
   }
 }
-    // ✅ Redemption succeeded — now we debug waiver triggering (no behavior change yet)
-        // Waiver send (Phase 1D) — only after credited booking success
-    try {
-      const waiverYear = new Date().getFullYear();
-      const emailLower = (parsed.inviteeEmail ?? "").toLowerCase().trim();
+// ✅ Redemption succeeded — waiver send (per Calendly invitee URI, not per email)
+try {
+  const waiverYear = new Date().getFullYear();
+  const emailLower = (parsed.inviteeEmail ?? "").toLowerCase().trim();
 
-      console.log("[waiver] post-booking check start", { email: emailLower, waiverYear });
-      console.log("[waiver] signnow module check", {
-        copyType: typeof signNow.signNowCopyTemplateToDocument,
-        inviteType: typeof signNow.signNowSendDocumentInvite,
-      });
+  if (!emailLower) {
+    console.warn("[waiver] missing inviteeEmail — cannot send waiver");
+  } else {
+    const calendlyInviteeUri = parsed.calendlyInviteeUri ?? null;
 
-      if (!emailLower) {
-        console.warn("[waiver] missing inviteeEmail — cannot send waiver");
-        return;
-      }
+    // Build attendee identity from Calendly payload
+const waiverInviteeUri = parsed.calendlyInviteeUri ?? null;
 
-      // Check existing waiver row for this email + year
-      const { data: existing, error: wErr } = await supabase
-        .from("waivers")
-        .select("status,sent_at,signed_at,external_document_id")
-        .eq("recipient_email", emailLower)
-        .eq("waiver_year", waiverYear)
-        .maybeSingle();
+const attendeeName = (() => {
+  const direct = String((body?.payload?.name as string | undefined) ?? "").trim();
+  if (direct) return direct;
 
-      if (wErr) {
-        console.error("[waiver] lookup error", wErr.message);
-        return;
-      }
+  const first = String(body?.payload?.first_name ?? "").trim();
+  const last = String(body?.payload?.last_name ?? "").trim();
+  const combined = `${first} ${last}`.trim();
+  return combined || null;
+})();
 
-      console.log("[waiver] lookup result", existing ?? null);
+// Lookup existing waiver:
+// Prefer: calendly_invitee_uri (unique per attendee)
+// Fallback: recipient_email + waiver_year (older flow)
+let existing: any = null;
 
-      // Idempotency: if already signed or already sent, do nothing
-      if (existing?.status === "signed" || existing?.signed_at) {
-        console.log("[waiver] already signed — no send", { email: emailLower, waiverYear });
-        return;
-      }
-      if (existing?.status === "sent" && existing?.external_document_id) {
-        console.log("[waiver] already sent — no send", { email: emailLower, waiverYear });
-        return;
-      }
+if (waiverInviteeUri) {
+  const { data: wByUri, error: wErr } = await supabase
+    .from("waivers")
+    .select("status,sent_at,signed_at,external_document_id,calendly_invitee_uri")
+    .eq("calendly_invitee_uri", waiverInviteeUri)
+    .maybeSingle();
 
-      console.log("[waiver] attempting SignNow send", { email: emailLower, waiverYear });
+  if (wErr) {
+    console.error("[waiver] lookup error (by uri)", wErr.message);
+  } else {
+    existing = wByUri ?? null;
+  }
+} else {
+  const { data: wByEmail, error: wErr } = await supabase
+    .from("waivers")
+    .select("status,sent_at,signed_at,external_document_id")
+    .eq("recipient_email", emailLower)
+    .eq("waiver_year", waiverYear)
+    .maybeSingle();
 
+  if (wErr) {
+    console.error("[waiver] lookup error (by email)", wErr.message);
+  } else {
+    existing = wByEmail ?? null;
+  }
+}
+
+    // Idempotency
+    if (existing?.status === "signed" || existing?.signed_at) {
+      console.log("[waiver] already signed — no send", { calendlyInviteeUri, waiverYear });
+    } else if (existing?.status === "sent" && existing?.external_document_id) {
+      console.log("[waiver] already sent — no send", { calendlyInviteeUri, waiverYear });
+    } else {
       const templateId = process.env.SIGNNOW_WAIVER_TEMPLATE_ID;
       const fromEmail = process.env.SIGNNOW_FROM_EMAIL;
       const roleName = process.env.SIGNNOW_WAIVER_ROLE_NAME || "Participant";
@@ -309,82 +303,85 @@ if (parsed.token) {
           SIGNNOW_WAIVER_TEMPLATE_ID: !!templateId,
           SIGNNOW_FROM_EMAIL: !!fromEmail,
         });
-        return;
+      } else {
+        console.log("[waiver] attempting SignNow send", { email: emailLower, waiverYear, calendlyInviteeUri });
+
+        const subject = `Happens By Chance — Annual Waiver (${waiverYear})`;
+        const message =
+          `Hello,\n\n` +
+          `Please sign your annual waiver for ${waiverYear}.\n\n` +
+          `— Happens By Chance Health & Wellness`;
+
+        const copy = await signNow.signNowCopyTemplateToDocument({
+          templateId,
+          documentName: `HBC Waiver ${waiverYear} — ${emailLower}`,
+        });
+
+        const documentId = copy.document_id;
+
+        await signNow.signNowSendDocumentInvite({
+          documentId,
+          fromEmail,
+          toEmail: emailLower,
+          subject,
+          message,
+          roleName,
+          expirationDays: 30,
+        });
+
+        // Attach member_id if email matches an existing member (helps /admin)
+        const { data: memberMatch, error: memMatchErr } = await supabase
+          .from("members")
+          .select("id, first_name, last_name")
+          .eq("email", emailLower)
+          .maybeSingle();
+
+        if (memMatchErr) {
+          console.error("[waiver] member lookup error", memMatchErr.message);
+        }
+
+        const recipientName =
+          memberMatch
+            ? [memberMatch.first_name, memberMatch.last_name].filter(Boolean).join(" ").trim() || null
+            : null;
+
+        const nowIso = new Date().toISOString();
+
+        // Upsert waiver row as sent:
+        // If we have calendlyInviteeUri, use that uniqueness.
+        // Otherwise fall back to email+year uniqueness.
+        const waiverRow: any = {
+          waiver_year: waiverYear,
+          status: "sent",
+          recipient_email: emailLower,
+          recipient_name: recipientName,
+	  calendly_invitee_uri: waiverInviteeUri,
+          attendee_name: attendeeName,
+          external_provider: "signnow",
+          external_document_id: documentId,
+          sent_at: nowIso,
+          member_id: memberMatch?.id ?? null,
+         
+        };
+
+        const onConflict = calendlyInviteeUri ? "calendly_invitee_uri" : "recipient_email,waiver_year";
+
+        const { error: upErr } = await supabase
+          .from("waivers")
+          .upsert(waiverRow, { onConflict });
+
+        if (upErr) {
+          console.error("[waiver] upsert sent failed", upErr.message);
+        } else {
+          console.log("[waiver] sent OK", { email: emailLower, waiverYear, documentId, calendlyInviteeUri });
+        }
       }
-
-      // Create doc from template + invite
-      const subject = `Happens By Chance — Annual Waiver (${waiverYear})`;
-      const message =
-        `Hello,\n\n` +
-        `Please sign your annual waiver for ${waiverYear}.\n\n` +
-        `— Happens By Chance Health & Wellness`;
-
-      const copy = await signNow.signNowCopyTemplateToDocument({
-
-        templateId,
-        documentName: `HBC Waiver ${waiverYear} — ${emailLower}`,
-      });
-
-      const documentId = copy.document_id;
-
-      await signNow.signNowSendDocumentInvite({
-
-        documentId,
-        fromEmail,
-        toEmail: emailLower,
-        subject,
-        message,
-        roleName,
-        expirationDays: 30,
-      });
-          // If this email belongs to an existing member, attach member_id so /admin recognizes it
-      const { data: memberMatch, error: memMatchErr } = await supabase
-        .from("members")
-        .select("id, first_name, last_name")
-        .eq("email", emailLower)
-        .maybeSingle();
-
-      if (memMatchErr) {
-        console.error("[waiver] member lookup error", memMatchErr.message);
-      }
-
-      const recipientName =
-        memberMatch
-          ? [memberMatch.first_name, memberMatch.last_name]
-              .filter(Boolean)
-              .join(" ")
-              .trim() || null
-          : null;
-
-      const nowIso = new Date().toISOString();
-
-      // Upsert waiver row as sent (unique index ensures one per year)
-      const { error: upErr } = await supabase
-        .from("waivers")
-        .upsert(
-          {
-            waiver_year: waiverYear,
-            status: "sent",
-            recipient_email: emailLower,
-            recipient_name: recipientName,
-            external_provider: "signnow",
-            external_document_id: documentId,
-            sent_at: nowIso,
-            member_id: memberMatch?.id ?? null,
-          },
-          { onConflict: "recipient_email,waiver_year" }
-        );
-
-      if (upErr) {
-        console.error("[waiver] upsert sent failed", upErr.message);
-        return;
-      }
-
-      console.log("[waiver] sent OK", { email: emailLower, waiverYear, documentId });
-    } catch (e: any) {
-      console.error("[waiver] send crash", e?.message);
-      // swallow error so Calendly still gets 200 (no retry storm)
     }
+  }
+} catch (e: any) {
+  console.error("[waiver] send crash", e?.message);
+  // swallow error so Calendly still gets 200 (no retry storm)
+}
 
 // If the booking-pass flow was used, the RPC probably wrote invitee_email = redeemEmail.
 // Correct the RSVP row to reflect the actual guest attendee email from Calendly.
