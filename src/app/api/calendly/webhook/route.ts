@@ -227,14 +227,6 @@ const guestEmail = parsed.inviteeEmail;
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
 // After successful redemption, store attendee name on the RSVP row for /admin display
-const attendeeName =
-  String(body?.payload?.name ?? "").trim() ||
-  [body?.payload?.first_name, body?.payload?.last_name]
-    .filter(Boolean)
-    .join(" ")
-    .trim() ||
-  null;
-
 if (parsed.calendlyInviteeUri) {
   const { error: rsvpNameErr } = await supabase
     .from("rsvps")
@@ -247,6 +239,7 @@ if (parsed.calendlyInviteeUri) {
     console.log("[calendly] RSVP invitee_name updated", { attendeeName });
   }
 }
+
 // Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
 if (parsed.token) {
   const { error: passUpdErr } = await supabase
