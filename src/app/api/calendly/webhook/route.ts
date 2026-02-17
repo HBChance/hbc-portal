@@ -112,38 +112,6 @@ export async function POST(req: Request) {
   }
 
   const parsed = parseCalendly(body);
-console.log("[calendly] parsed identity", {
-  eventType: parsed.eventType,
-  inviteeEmail: parsed.inviteeEmail,
-  inviteeName: (parsed as any).inviteeName ?? null,
-  calendlyInviteeUri: parsed.calendlyInviteeUri,
-  calendlyEventUri: parsed.calendlyEventUri,
-  questions: (parsed as any).questions ?? null,
-});
-
-// Prefer redeeming against the purchaser when a booking-pass is used
-let redeemMemberId: string | null = null;
-
-if (parsed.bookingPassId) {
-  const { data: passRow, error: passErr } = await supabase
-    .from("booking_passes")
-    .select("member_id, used_at, expires_at")
-    .eq("id", parsed.bookingPassId)
-    .maybeSingle();
-
-  if (passErr) console.error("[calendly] booking_pass lookup failed", passErr.message);
-
-  if (passRow?.member_id) {
-    if (passRow.used_at) {
-      console.warn("[calendly] booking_pass already used", { bookingPassId: parsed.bookingPassId });
-    } else if (passRow.expires_at && Date.parse(passRow.expires_at) <= Date.now()) {
-      console.warn("[calendly] booking_pass expired", { bookingPassId: parsed.bookingPassId });
-    } else {
-      redeemMemberId = passRow.member_id;
-    }
-  }
-}
-
   console.log(
     "[calendly] received:",
     JSON.stringify({
@@ -175,9 +143,31 @@ if (parsed.bookingPassId) {
         });
         return jsonResponse({ ok: true, ignored: "missing_fields_created" }, 200);
       }
+// If booking-pass token exists, redeem credits against the PURCHASER email (booking_pass.email),
+// while keeping RSVP/waiver tied to the guest (parsed.inviteeEmail).
+let redeemEmail = parsed.inviteeEmail;
 
+if (parsed.token) {
+  const { data: passRow, error: passErr } = await supabase
+    .from("booking_passes")
+    .select("email, used_at, expires_at")
+    .eq("token", parsed.token)
+    .maybeSingle();
+
+  if (passErr) {
+    console.error("[calendly] booking_pass lookup failed", passErr.message);
+  } else if (!passRow) {
+    console.warn("[calendly] booking_pass not found for token", { token: parsed.token });
+  } else if (passRow.used_at) {
+    console.warn("[calendly] booking_pass already used", { token: parsed.token });
+  } else if (passRow.expires_at && Date.parse(passRow.expires_at) <= Date.now()) {
+    console.warn("[calendly] booking_pass expired", { token: parsed.token });
+  } else if (passRow.email) {
+    redeemEmail = String(passRow.email).toLowerCase().trim();
+  }
+}
       const { data, error } = await supabase.rpc("redeem_credit_for_calendly", {
-        p_email: parsed.inviteeEmail,
+        p_email: redeemEmail,
         p_calendly_event_uri: parsed.calendlyEventUri,
         p_calendly_invitee_uri: parsed.calendlyInviteeUri,
         p_event_start_at: parsed.startTime,
@@ -195,7 +185,7 @@ if (parsed.bookingPassId) {
           const { data: member } = await supabase
             .from("members")
             .select("id")
-            .eq("email", parsed.inviteeEmail)
+            .eq("email", redeemEmail)
             .maybeSingle();
 
           member_id = member?.id ?? null;
