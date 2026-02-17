@@ -145,7 +145,7 @@ const guestsByMember = new Map<
 >();
 
 // Keep it lightweight: show upcoming + last 60 days
-const cutoffMs = Date.now() - 60 * 24 * 60 * 60 * 1000;
+
 
 for (const r of rsvps ?? []) {
   if (!r.member_id) continue;
@@ -176,13 +176,6 @@ if (
   continue;
 }
 
-const startIso =
-  (r as any).event_start_at ??
-  (r as any).calendly_event_start ??
-  null;
-const startMs = startIso ? Date.parse(startIso) : null;
-if (startMs && startMs < cutoffMs) continue;
-
   // Identify “self” RSVP (so we can hide it from the Guest dropdown)
   const m = membersById.get(r.member_id);
   const memberEmailLower = String(m?.email ?? "").toLowerCase().trim();
@@ -207,7 +200,7 @@ arr.push({
   calendly_invitee_uri: (r as any).calendly_invitee_uri ?? null,
   invitee_email: r.invitee_email ?? null,
   invitee_name: inviteeName || null,
-  event_start_at: startIso,
+  event_start_at: (r as any).event_start_at ?? null,
   waiver_status: ((waiverRowForInvitee as any)?.status as any) ?? undefined,
   status: r.status ?? "created",
 });

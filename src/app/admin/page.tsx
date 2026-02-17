@@ -268,7 +268,9 @@ export default async function AdminHome() {
                     <td style={{ padding: "10px 12px" }}>
                       <div style={{ fontWeight: 700 }}>{r.full_name ?? "—"}</div>
                       <div style={{ fontSize: 12, color: "#64748b" }}>{r.email ?? r.member_id}</div>
-{Array.isArray((r as any).guests) && (r as any).guests.length > 0 && (
+{(() => {
+  const guests = Array.isArray((r as any).guests) ? (r as any).guests : [];
+  return (
   <details style={{ marginTop: 6 }}>
     <summary style={{ cursor: "pointer", fontSize: 12, color: "#64748b" }}>
       Guests ({(r as any).guests.length})
@@ -307,7 +309,8 @@ export default async function AdminHome() {
       ))}
     </div>
   </details>
-)}
+  );
+})()}
                     </td>
 
                     <td style={{ padding: "10px 12px" }}>
