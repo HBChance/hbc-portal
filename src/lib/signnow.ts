@@ -96,3 +96,11 @@ export async function signNowSendDocumentInvite(args: {
 export async function signNowGetDocument(documentId: string) {
   return await signNowRequest<any>(`/document/${documentId}`, { method: "GET" });
 }
+
+// NEW: create a shareable signing link for an existing document (no new invite)
+export async function signNowCreateSigningLink(args: { documentId: string }) {
+  return await signNowRequest<any>(`/link`, {
+    method: "POST",
+    body: { document_id: args.documentId },
+  });
+}

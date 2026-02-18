@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
-import { signNowSendDocumentInvite } from "@/lib/signnow";
+import { signNowCreateSigningLink } from "@/lib/signnow";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -108,33 +109,10 @@ export async function POST(req: Request) {
       }),
     });
 
-    // Re-send SignNow invite for each existing documentId (NO new docs created)
-    const fromEmail = mustGetEnv("SIGNNOW_FROM_EMAIL");
-    const roleName = mustGetEnv("SIGNNOW_WAIVER_ROLE_NAME");
-
-    const message =
-      `Hello${recipient_name ? ` ${recipient_name}` : ""},\n\n` +
-      `Reminder: please sign your annual waiver for ${WAIVER_YEAR}.\n\n` +
-      `— Happens By Chance Health & Wellness`;
-
-    let resentCount = 0;
-
-    for (const w of pending) {
-      const docId = String((w as any).external_document_id ?? "").trim();
-      if (!docId) continue;
-
-      await signNowSendDocumentInvite({
-        documentId: docId,
-        fromEmail,
-        toEmail: recipient_email,
-        subject: `Happens By Chance — Annual Waiver (${WAIVER_YEAR})`,
-        message,
-        roleName,
-        expirationDays: 30,
-      });
-
-      resentCount += 1;
-    }
+    // NOTE: Do NOT re-invite via SignNow here.
+// SignNow rejects duplicate invites for the same document.
+// Our reminder is the email we already sent above.
+const resentCount = 0;
 
     return NextResponse.json({ ok: true, pending_count: pending.length, resent_count: resentCount });
   } catch (e: any) {
