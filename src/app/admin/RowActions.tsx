@@ -13,7 +13,7 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  type Busy = "booking" | "waiver" | "credit" | null;
+  type Busy = "booking" | "waiver" | "remind" | "credit" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -131,6 +131,35 @@ const [busy, setBusy] = useState<Busy>(null);
         title={waiverStatus === "signed" ? "Already signed" : "Send annual waiver via SignNow"}
       >
         {busy === "waiver" ? "Sending…" : "Send waiver"}
+      </button>
+      <button
+        type="button"
+        disabled={busy !== null || waiverStatus === "signed"}
+        onClick={async () => {
+          setMsg(null);
+          setBusy("remind");
+          try {
+            await postJson("/api/admin/waiver/remind", { member_id: memberId });
+            setMsg("Waiver reminder sent");
+            window.location.reload();
+          } catch (e: any) {
+            setMsg(e?.message || "Failed");
+          } finally {
+            setBusy(null);
+          }
+        }}
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 10,
+          padding: "6px 10px",
+          fontSize: 12,
+          background: "white",
+          opacity: busy !== null || waiverStatus === "signed" ? 0.5 : 1,
+          cursor: busy !== null || waiverStatus === "signed" ? "not-allowed" : "pointer",
+        }}
+        title={waiverStatus === "signed" ? "Already signed" : "Send reminder + resend SignNow invite(s) (no duplicates)"}
+      >
+        {busy === "remind" ? "Sending…" : "Remind waiver"}
       </button>
 
       {msg ? <span style={{ fontSize: 12, color: "#64748b" }}>{msg}</span> : null}
