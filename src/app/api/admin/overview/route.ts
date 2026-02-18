@@ -109,6 +109,9 @@ const waiverByInviteeUri = new Map<string, any>();
 for (const w of waivers ?? []) {
   if (w.member_id) waiverByMemberId.set(w.member_id, w);
   if (w.recipient_email) waiverByEmail.set(String(w.recipient_email).toLowerCase(), w);
+  if ((w as any).calendly_invitee_uri) {
+    waiverByInviteeUri.set(String((w as any).calendly_invitee_uri), w);
+  }
 
   const uri = String((w as any).calendly_invitee_uri ?? "").trim();
   if (uri) waiverByInviteeUri.set(uri, w);
@@ -161,8 +164,15 @@ const purchaserName = purchaser
 const uriKey = String((r as any).calendly_invitee_uri ?? "").trim();
 const waiverRowForInvitee = uriKey ? waiverByInviteeUri.get(uriKey) : null;
 
-const inviteeName =
-  String((r as any).invitee_name ?? "").trim() ||
+const waiverRow = (r as any).calendly_invitee_uri
+  ? waiverByInviteeUri.get(String((r as any).calendly_invitee_uri))
+  : null;
+
+const inviteeName = String(
+  (r as any).invitee_name ??
+  waiverRow?.attendee_name ??
+  ""
+).trim();
   String((waiverRowForInvitee as any)?.attendee_name ?? "").trim() ||
   "";
 
