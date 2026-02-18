@@ -154,42 +154,6 @@ const guestsByMember = new Map<
 for (const r of rsvps ?? []) {
   if (!r.member_id) continue;
   if (r.status === "canceled") continue;
-
-// Skip showing the member as their own "guest"
-const purchaser = membersById.get(r.member_id);
-const purchaserEmail = String(purchaser?.email ?? "").toLowerCase().trim();
-const inviteeEmail = String(r.invitee_email ?? "").toLowerCase().trim();
-const purchaserName = purchaser
-  ? `${String(purchaser.first_name ?? "").trim()} ${String(purchaser.last_name ?? "").trim()}`.trim()
-  : "";
-const uriKey = String((r as any).calendly_invitee_uri ?? "").trim();
-const waiverRowForInvitee = uriKey ? waiverByInviteeUri.get(uriKey) : null;
-
-const waiverRow = (r as any).calendly_invitee_uri
-  ? waiverByInviteeUri.get(String((r as any).calendly_invitee_uri))
-  : null;
-
-const waiverMatch = (r as any).calendly_invitee_uri
-  ? waiverByInviteeUri.get((r as any).calendly_invitee_uri)
-  : null;
-
-const inviteeName = String(
-  (r as any).invitee_name ??
-  waiverMatch?.attendee_name ??
-  ""
-).trim();
-
-  String((waiverRowForInvitee as any)?.attendee_name ?? "").trim() ||
-  "";
-
-// If the RSVP is for the purchaser themselves (same email AND no distinct guest name), ignore it
-if (
-  purchaserEmail &&
-  inviteeEmail &&
-  purchaserEmail === inviteeEmail &&
-  (!inviteeName || (purchaserName && inviteeName.toLowerCase() === purchaserName.toLowerCase()))
-) {
-  continue;
 }
 
   // Identify “self” RSVP (so we can hide it from the Guest dropdown)
