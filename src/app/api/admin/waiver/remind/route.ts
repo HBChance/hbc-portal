@@ -69,17 +69,39 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No unsigned waivers for this member." }, { status: 409 });
     }
 
-    // Build the “who is unsigned” list for the reminder email
-    const names = pending
-      .map((w: any) => String(w.attendee_name ?? "").trim())
-      .filter(Boolean);
+    // Build the “who is unsigned” list WITH signing links (one link per waiver doc)
+const items: string[] = [];
 
-    const uniqueNames = Array.from(new Set(names));
+for (const w of pending) {
+  const docId = String((w as any).external_document_id ?? "").trim();
+  const name = String((w as any).attendee_name ?? "").trim() || "Waiver";
 
-    const listHtml =
-      uniqueNames.length > 0
-        ? `<ul>${uniqueNames.map((n) => `<li>${n}</li>`).join("")}</ul>`
-        : `<p>(Name not captured on one or more waivers — SignNow invite still resent.)</p>`;
+  if (!docId) {
+    items.push(`<li>${name} — (missing document id)</li>`);
+    continue;
+  }
+
+  try {
+    const link = await signNowCreateSigningLink({ documentId: docId });
+    const url =
+      String(link?.url_no_signup ?? link?.url ?? "").trim() || "";
+
+    if (!url) {
+      items.push(`<li>${name} — (could not generate link)</li>`);
+    } else {
+      items.push(
+        `<li>${name} — <a href="${url}"><strong>Sign now</strong></a></li>`
+      );
+    }
+  } catch {
+    items.push(`<li>${name} — (could not generate link)</li>`);
+  }
+}
+
+const listHtml =
+  items.length > 0
+    ? `<ul>${items.join("")}</ul>`
+    : `<p>(No unsigned waivers found.)</p>`;
 
     // Send a normal email reminder (single email)
     // Reuse your existing Edge email sender (same endpoint you already use for booking-pass)
@@ -92,7 +114,7 @@ export async function POST(req: Request) {
       <p>This is a friendly reminder to sign your annual waiver(s) for ${WAIVER_YEAR}.</p>
       <p><strong>Still unsigned:</strong></p>
       ${listHtml}
-      <p>We’ve re-sent the SignNow email invite(s) so you can sign without creating anything new.</p>
+      <p>Use the “Sign now” link above to open each waiver and sign.</p>
       <p>— Happens By Chance Health & Wellness</p>
     `;
 
@@ -112,9 +134,8 @@ export async function POST(req: Request) {
     // NOTE: Do NOT re-invite via SignNow here.
 // SignNow rejects duplicate invites for the same document.
 // Our reminder is the email we already sent above.
-const resentCount = 0;
 
-    return NextResponse.json({ ok: true, pending_count: pending.length, resent_count: resentCount });
+    return NextResponse.json({ ok: true, pending_count: pending.length });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
   }
