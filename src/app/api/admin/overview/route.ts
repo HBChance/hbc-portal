@@ -109,6 +109,7 @@ const waiverByInviteeUri = new Map<string, any>();
 for (const w of waivers ?? []) {
   if (w.member_id) waiverByMemberId.set(w.member_id, w);
   if (w.recipient_email) waiverByEmail.set(String(w.recipient_email).toLowerCase(), w);
+  if (w.calendly_invitee_uri) waiverByInviteeUri.set(w.calendly_invitee_uri, w);
   if ((w as any).calendly_invitee_uri) {
     waiverByInviteeUri.set(String((w as any).calendly_invitee_uri), w);
   }
@@ -168,11 +169,16 @@ const waiverRow = (r as any).calendly_invitee_uri
   ? waiverByInviteeUri.get(String((r as any).calendly_invitee_uri))
   : null;
 
+const waiverMatch = (r as any).calendly_invitee_uri
+  ? waiverByInviteeUri.get((r as any).calendly_invitee_uri)
+  : null;
+
 const inviteeName = String(
   (r as any).invitee_name ??
-  waiverRow?.attendee_name ??
+  waiverMatch?.attendee_name ??
   ""
 ).trim();
+
   String((waiverRowForInvitee as any)?.attendee_name ?? "").trim() ||
   "";
 
@@ -194,7 +200,7 @@ if (
     .toLowerCase();
 
   const inviteeEmailLower = String(r.invitee_email ?? "").toLowerCase().trim();
-  const inviteeNameLower = String((r as any).invitee_name ?? "").trim().toLowerCase();
+  const inviteeNameLower = inviteeName.toLowerCase();
 
   // Treat as “self” if:
   // - invitee_name matches member full name, OR
