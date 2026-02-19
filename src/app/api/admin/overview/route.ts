@@ -154,7 +154,8 @@ const guestsByMember = new Map<
 for (const r of rsvps ?? []) {
   if (!r.member_id) continue;
   if (r.status === "canceled") continue;
-}
+
+  const inviteeName = String((r as any).invitee_name ?? "").trim();
 
   // Identify “self” RSVP (so we can hide it from the Guest dropdown)
   const m = membersById.get(r.member_id);
@@ -175,15 +176,18 @@ for (const r of rsvps ?? []) {
 
   if (looksLikeSelf) continue;
 
+  const inviteeUri = String((r as any).calendly_invitee_uri ?? "").trim() || null;
+  const waiverRowForInvitee = inviteeUri ? waiverByInviteeUri.get(inviteeUri) : null;
+
   const arr = guestsByMember.get(r.member_id) ?? [];
-arr.push({
-  calendly_invitee_uri: (r as any).calendly_invitee_uri ?? null,
-  invitee_email: r.invitee_email ?? null,
-  invitee_name: inviteeName || null,
-  event_start_at: (r as any).event_start_at ?? null,
-  waiver_status: ((waiverRowForInvitee as any)?.status as any) ?? undefined,
-  status: r.status ?? "created",
-});
+  arr.push({
+    calendly_invitee_uri: inviteeUri,
+    invitee_email: r.invitee_email ?? null,
+    invitee_name: inviteeName || null,
+    event_start_at: (r as any).event_start_at ?? null,
+    waiver_status: (waiverRowForInvitee?.status as any) ?? undefined,
+    status: r.status ?? "created",
+  });
   guestsByMember.set(r.member_id, arr);
 }
 
