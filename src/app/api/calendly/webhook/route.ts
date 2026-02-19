@@ -90,6 +90,8 @@ function isInsufficientCredits(message: string | null | undefined) {
 }
 
 export async function POST(req: Request) {
+console.log("[calendly] incoming url", req.url);
+
   // Token gate
   const token = getQueryToken(req);
   const expected = process.env.CALENDLY_WEBHOOK_TOKEN;
