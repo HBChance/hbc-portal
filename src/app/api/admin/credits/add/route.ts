@@ -38,18 +38,27 @@ export async function POST(req: Request) {
     return json({ error: "INVALID_JSON" }, 400);
   }
 
-  const member_id = String(body?.member_id ?? "");
-  const amount = Number(body?.amount ?? 0);
-  const reason = String(body?.reason ?? "Manual grant");
+  const member_id = String(body?.member_id ?? "").trim();
 
-  if (!member_id) return json({ error: "MISSING_MEMBER_ID" }, 400);
-  if (!Number.isFinite(amount) || amount === 0) return json({ error: "INVALID_AMOUNT" }, 400);
+// accept either "amount" (new) or "quantity" (what RowActions sends)
+const amountRaw =
+  body?.amount ?? body?.quantity ?? body?.p_amount ?? null;
 
-  const { data, error } = await supabase.rpc("add_credit", {
-    p_member_id: member_id,
-    p_amount: amount,
-    p_reason: reason,
-  });
+const amount = Number(amountRaw);
+const reason = String(body?.reason ?? "Manual grant");
+
+if (!member_id) return json({ error: "MISSING_MEMBER_ID" }, 400);
+
+// require a non-zero finite number (you can tighten to integer later if you want)
+if (!Number.isFinite(amount) || amount === 0) {
+  return json({ error: "INVALID_AMOUNT" }, 400);
+}
+
+const { data, error } = await supabase.rpc("add_credit", {
+  p_member_id: member_id,
+  p_amount: amount,
+  p_reason: reason,
+});
 
   if (error) return json({ error: error.message }, 500);
 
