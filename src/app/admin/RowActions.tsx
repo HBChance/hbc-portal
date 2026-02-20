@@ -13,7 +13,7 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  type Busy = "booking" | "waiver" | "remind" | "credit" | null;
+  type Busy = "booking" | "waiver" | "credit" | "checkwaiver" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -132,6 +132,35 @@ const [busy, setBusy] = useState<Busy>(null);
       >
         {busy === "waiver" ? "Sending…" : "Send waiver"}
       </button>
+<button
+  type="button"
+  disabled={busy !== null}
+  onClick={async () => {
+    setMsg(null);
+    setBusy("checkwaiver");
+    try {
+      const out = await postJson("/api/admin/waiver/check", { member_id: memberId });
+      setMsg(`Checked waivers: ${out.marked_signed ?? 0} marked signed`);
+      window.location.reload();
+    } catch (e: any) {
+      setMsg(e?.message || "Failed");
+    } finally {
+      setBusy(null);
+    }
+  }}
+  style={{
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "6px 10px",
+    fontSize: 12,
+    background: "white",
+    opacity: busy !== null ? 0.5 : 1,
+    cursor: busy !== null ? "not-allowed" : "pointer",
+  }}
+  title="Check SignNow status for this member's unsigned waivers and mark signed"
+>
+  {busy === "checkwaiver" ? "Checking…" : "Check waivers"}
+</button>
       <button
         type="button"
         disabled={busy !== null || waiverStatus === "signed"}
