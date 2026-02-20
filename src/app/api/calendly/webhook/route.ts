@@ -228,19 +228,6 @@ const guestEmail = parsed.inviteeEmail;
            // Always 200 so Calendly doesn't hammer retries forever (your current behavior)
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
-// After successful redemption, store attendee name on the RSVP row for /admin display
-if (parsed.calendlyInviteeUri) {
-  const { error: rsvpNameErr } = await supabase
-    .from("rsvps")
-    .update({ invitee_name: attendeeName })
-    .eq("calendly_invitee_uri", parsed.calendlyInviteeUri);
-
-  if (rsvpNameErr) {
-    console.error("[calendly] failed to set RSVP invitee_name", rsvpNameErr.message);
-  } else {
-    console.log("[calendly] RSVP invitee_name updated", { attendeeName });
-  }
-}
 
 // Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
 if (parsed.token) {
@@ -256,64 +243,114 @@ if (parsed.token) {
 }
 // ✅ Redemption succeeded — waiver send (per Calendly invitee URI, not per email)
 try {
-  const waiverYear = new Date().getFullYear();
+const waiverYear = new Date().getFullYear();
   const emailLower = (parsed.inviteeEmail ?? "").toLowerCase().trim();
+  const newInviteeUri = parsed.calendlyInviteeUri ?? null;
 
   if (!emailLower) {
     console.warn("[waiver] missing inviteeEmail — cannot send waiver");
   } else {
-    const calendlyInviteeUri = parsed.calendlyInviteeUri ?? null;
+    // attendee name from payload (already in your file, but keep it here to store on waiver row)
+    const attendeeName = (() => {
+      const direct = String((body?.payload?.name as string | undefined) ?? "").trim();
+      if (direct) return direct;
 
-    // Build attendee identity from Calendly payload
-const waiverInviteeUri = parsed.calendlyInviteeUri ?? null;
+      const first = String(body?.payload?.first_name ?? "").trim();
+      const last = String(body?.payload?.last_name ?? "").trim();
+      const combined = `${first} ${last}`.trim();
+      return combined || null;
+    })();
 
-const attendeeName = (() => {
-  const direct = String((body?.payload?.name as string | undefined) ?? "").trim();
-  if (direct) return direct;
+    // Detect reschedule: Calendly includes payload.rescheduled + payload.old_invitee
+    const rescheduled = Boolean(body?.payload?.rescheduled);
+    const oldInviteeUri =
+      (body?.payload?.old_invitee?.uri as string | undefined) ??
+      (body?.payload?.old_invitee?.invitee?.uri as string | undefined) ??
+      null;
 
-  const first = String(body?.payload?.first_name ?? "").trim();
-  const last = String(body?.payload?.last_name ?? "").trim();
-  const combined = `${first} ${last}`.trim();
-  return combined || null;
-})();
+    // 1) If rescheduled and we can find an existing waiver tied to the OLD invitee uri,
+    //    do NOT send anything new. Instead, "alias" it to the new invitee uri so admin/UI can find it.
+    if (rescheduled && oldInviteeUri && newInviteeUri) {
+      const { data: oldW, error: oldWErr } = await supabase
+        .from("waivers")
+        .select("status,sent_at,signed_at,external_document_id,external_provider,member_id,recipient_name,recipient_email,attendee_name")
+        .eq("calendly_invitee_uri", oldInviteeUri)
+        .maybeSingle();
 
-// Lookup existing waiver:
-// Prefer: calendly_invitee_uri (unique per attendee)
-// Fallback: recipient_email + waiver_year (older flow)
-let existing: any = null;
+      if (oldWErr) {
+        console.error("[waiver] reschedule lookup error (old uri)", oldWErr.message);
+      } else if (oldW?.external_document_id) {
+        const aliasRow: any = {
+          waiver_year: waiverYear,
+          status: oldW.status ?? "sent",
+          recipient_email: emailLower,
+          recipient_name: oldW.recipient_name ?? null,
+          calendly_invitee_uri: newInviteeUri,
+          attendee_name: oldW.attendee_name ?? attendeeName ?? null,
+          external_provider: oldW.external_provider ?? "signnow",
+          external_document_id: oldW.external_document_id,
+          sent_at: oldW.sent_at ?? new Date().toISOString(),
+          signed_at: oldW.signed_at ?? null,
+          member_id: oldW.member_id ?? null,
+        };
 
-if (waiverInviteeUri) {
-  const { data: wByUri, error: wErr } = await supabase
-    .from("waivers")
-    .select("status,sent_at,signed_at,external_document_id,calendly_invitee_uri")
-    .eq("calendly_invitee_uri", waiverInviteeUri)
-    .maybeSingle();
+        const { error: aliasErr } = await supabase
+          .from("waivers")
+          .upsert(aliasRow, { onConflict: "calendly_invitee_uri" });
 
-  if (wErr) {
-    console.error("[waiver] lookup error (by uri)", wErr.message);
-  } else {
-    existing = wByUri ?? null;
-  }
-} else {
-  const { data: wByEmail, error: wErr } = await supabase
-    .from("waivers")
-    .select("status,sent_at,signed_at,external_document_id")
-    .eq("recipient_email", emailLower)
-    .eq("waiver_year", waiverYear)
-    .maybeSingle();
+        if (aliasErr) {
+          console.error("[waiver] reschedule alias upsert failed", aliasErr.message);
+        } else {
+          console.log("[waiver] reschedule detected — reused prior waiver", {
+            oldInviteeUri,
+            newInviteeUri,
+            documentId: oldW.external_document_id,
+          });
+        }
 
-  if (wErr) {
-    console.error("[waiver] lookup error (by email)", wErr.message);
-  } else {
-    existing = wByEmail ?? null;
-  }
-}
+        // Important: stop here. No new waiver send.
+        return;
+      }
+      // If we couldn't find old waiver, fall through and treat like a normal booking.
+    }
 
-    // Idempotency
+    // 2) Normal flow: check if waiver already exists for THIS invitee uri
+    let existing: any = null;
+
+    if (newInviteeUri) {
+      const { data: wByUri, error: wErr } = await supabase
+        .from("waivers")
+        .select("status,sent_at,signed_at,external_document_id,calendly_invitee_uri")
+        .eq("calendly_invitee_uri", newInviteeUri)
+        .maybeSingle();
+
+      if (wErr) {
+        console.error("[waiver] lookup error (by uri)", wErr.message);
+      } else {
+        existing = wByUri ?? null;
+      }
+    } else {
+      // Legacy fallback (only if we truly have no invitee uri)
+      const { data: wByEmail, error: wErr } = await supabase
+        .from("waivers")
+        .select("status,sent_at,signed_at,external_document_id")
+        .eq("recipient_email", emailLower)
+        .eq("waiver_year", waiverYear)
+        .is("calendly_invitee_uri", null)
+        .maybeSingle();
+
+      if (wErr) {
+        console.error("[waiver] lookup error (legacy email/year)", wErr.message);
+      } else {
+        existing = wByEmail ?? null;
+      }
+    }
+
+    // 3) Idempotency
     if (existing?.status === "signed" || existing?.signed_at) {
-      console.log("[waiver] already signed — no send", { calendlyInviteeUri, waiverYear });
+      console.log("[waiver] already signed — no send", { newInviteeUri, waiverYear });
     } else if (existing?.status === "sent" && existing?.external_document_id) {
-      console.log("[waiver] already sent — no send", { calendlyInviteeUri, waiverYear });
+      console.log("[waiver] already sent — no send", { newInviteeUri, waiverYear });
     } else {
       const templateId = process.env.SIGNNOW_WAIVER_TEMPLATE_ID;
       const fromEmail = process.env.SIGNNOW_FROM_EMAIL;
@@ -325,7 +362,11 @@ if (waiverInviteeUri) {
           SIGNNOW_FROM_EMAIL: !!fromEmail,
         });
       } else {
-        console.log("[waiver] attempting SignNow send", { email: emailLower, waiverYear, calendlyInviteeUri });
+        console.log("[waiver] attempting SignNow send", {
+          email: emailLower,
+          waiverYear,
+          calendlyInviteeUri: newInviteeUri,
+        });
 
         const subject = `Happens By Chance — Annual Waiver (${waiverYear})`;
         const message =
@@ -335,7 +376,7 @@ if (waiverInviteeUri) {
 
         const copy = await signNow.signNowCopyTemplateToDocument({
           templateId,
-          documentName: `HBC Waiver ${waiverYear} — ${emailLower}`,
+          documentName: `HBC Waiver ${waiverYear} — ${emailLower} — ${attendeeName ?? "Participant"}`,
         });
 
         const documentId = copy.document_id;
@@ -368,24 +409,20 @@ if (waiverInviteeUri) {
 
         const nowIso = new Date().toISOString();
 
-        // Upsert waiver row as sent:
-        // If we have calendlyInviteeUri, use that uniqueness.
-        // Otherwise fall back to email+year uniqueness.
         const waiverRow: any = {
           waiver_year: waiverYear,
           status: "sent",
           recipient_email: emailLower,
           recipient_name: recipientName,
-	  calendly_invitee_uri: waiverInviteeUri,
+          calendly_invitee_uri: newInviteeUri,
           attendee_name: attendeeName,
           external_provider: "signnow",
           external_document_id: documentId,
           sent_at: nowIso,
           member_id: memberMatch?.id ?? null,
-         
         };
 
-        const onConflict = calendlyInviteeUri ? "calendly_invitee_uri" : "recipient_email,waiver_year";
+        const onConflict = newInviteeUri ? "calendly_invitee_uri" : "recipient_email,waiver_year";
 
         const { error: upErr } = await supabase
           .from("waivers")
@@ -394,7 +431,7 @@ if (waiverInviteeUri) {
         if (upErr) {
           console.error("[waiver] upsert sent failed", upErr.message);
         } else {
-          console.log("[waiver] sent OK", { email: emailLower, waiverYear, documentId, calendlyInviteeUri });
+          console.log("[waiver] sent OK", { email: emailLower, waiverYear, documentId, newInviteeUri });
         }
       }
     }
