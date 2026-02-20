@@ -228,7 +228,19 @@ const guestEmail = parsed.inviteeEmail;
            // Always 200 so Calendly doesn't hammer retries forever (your current behavior)
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
+// Store attendee name on RSVP row (needed so /admin can distinguish self vs guest)
+if (parsed.calendlyInviteeUri) {
+  const { error: rsvpNameErr } = await supabase
+    .from("rsvps")
+    .update({ invitee_name: attendeeName })
+    .eq("calendly_invitee_uri", parsed.calendlyInviteeUri);
 
+  if (rsvpNameErr) {
+    console.error("[calendly] failed to set RSVP invitee_name", rsvpNameErr.message);
+  } else {
+    console.log("[calendly] RSVP invitee_name updated", { attendeeName });
+  }
+}
 // Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
 if (parsed.token) {
   const { error: passUpdErr } = await supabase
