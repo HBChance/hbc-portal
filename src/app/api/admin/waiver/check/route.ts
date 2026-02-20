@@ -7,9 +7,10 @@ export const dynamic = "force-dynamic";
 
 const WAIVER_YEAR = new Date().getFullYear();
 
-function looksCompleted(doc: any) {
-  // 1) Common top-level status fields
+function looksCompleted(doc: any): boolean {
+  // 1) Top-level status checks
   const status = String(doc?.status ?? doc?.document_status ?? doc?.state ?? "").toLowerCase();
+
   if (
     status.includes("completed") ||
     status.includes("signed") ||
@@ -19,23 +20,31 @@ function looksCompleted(doc: any) {
     return true;
   }
 
-  // 2) Common boolean flags
-  if (doc?.is_completed === true || doc?.completed === true) return true;
+  // 2) Boolean flags
+  if (doc?.is_completed === true || doc?.completed === true) {
+    return true;
+  }
 
-  // 3) SignNow often exposes invite progress in arrays like field_invites / invites
+  // 3) Invite arrays (SignNow commonly uses these)
   const invites = (doc?.field_invites ?? doc?.invites ?? doc?.signing_invites ?? []) as any[];
 
   if (Array.isArray(invites) && invites.length > 0) {
-    // If every invite is fulfilled/signed/completed, treat doc as complete
-    const normalized = invites.map((i) => String(i?.status ?? i?.state ?? "").toLowerCase());
-    const allDone = normalized.every((s) =>
-      s.includes("fulfilled") || s.includes("signed") || s.includes("completed") || s === "complete"
-    );
+    const allDone = invites.every((i) => {
+      const s = String(i?.status ?? i?.state ?? "").toLowerCase();
+      return (
+        s.includes("fulfilled") ||
+        s.includes("signed") ||
+        s.includes("completed") ||
+        s === "complete"
+      );
+    });
+
     if (allDone) return true;
   }
 
-  // 4) Some payloads use a "roles" / "signers" list with a completion flag
+  // 4) Role-based fallback
   const roles = (doc?.roles ?? doc?.signers ?? []) as any[];
+
   if (Array.isArray(roles) && roles.length > 0) {
     const allRoleDone = roles.every((r) => {
       const rs = String(r?.status ?? r?.state ?? "").toLowerCase();
@@ -46,21 +55,9 @@ function looksCompleted(doc: any) {
         r?.is_completed === true
       );
     });
+
     if (allRoleDone) return true;
   }
-
-  return false;
-}
-  // 2) Fallback: top-level status shapes (varies by account/API version)
-  const status = String(doc?.status ?? doc?.document_status ?? doc?.state ?? "").toLowerCase();
-  if (
-    status.includes("completed") ||
-    status.includes("signed") ||
-    status.includes("fulfilled")
-  ) return true;
-
-  // 3) Fallback booleans
-  if (doc?.is_completed === true || doc?.completed === true) return true;
 
   return false;
 }
