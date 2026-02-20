@@ -140,7 +140,8 @@ const [busy, setBusy] = useState<Busy>(null);
     setBusy("checkwaiver");
     try {
       const out = await postJson("/api/admin/waiver/check", { member_id: memberId });
-      setMsg(`Checked waivers: ${out.marked_signed ?? 0} marked signed`);
+setMsg(`Checked waivers: ${out.marked_signed} marked signed (checked ${out.checked})`);
+console.log("[waiver-check] response", out);
       window.location.reload();
     } catch (e: any) {
       setMsg(e?.message || "Failed");

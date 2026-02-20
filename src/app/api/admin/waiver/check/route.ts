@@ -90,7 +90,7 @@ export async function POST(req: Request) {
     let checked = 0;
     let marked_signed = 0;
     const errors: Array<{ waiver_id: string; error: string }> = [];
-
+const debug_docs: any[] = [];
     for (const w of waivers) {
       const docId = String(w.external_document_id ?? "").trim();
       if (!docId) continue;
@@ -99,6 +99,42 @@ export async function POST(req: Request) {
 
       try {
         const doc = await signNowGetDocument(docId);
+if (debug_docs.length < 3) {
+  const pick = (v: any) => (v == null ? v : String(v));
+  const first = (arr: any) => (Array.isArray(arr) && arr.length ? arr[0] : null);
+
+  debug_docs.push({
+    waiver_id: w.id,
+    docId,
+    top_keys: Object.keys(doc ?? {}).slice(0, 40),
+
+    // common top-level status fields
+    status: pick((doc as any)?.status),
+    document_status: pick((doc as any)?.document_status),
+    state: pick((doc as any)?.state),
+    is_completed: (doc as any)?.is_completed ?? null,
+    completed: (doc as any)?.completed ?? null,
+
+    // common nested shapes
+    data_keys: Object.keys((doc as any)?.data ?? {}).slice(0, 40),
+    data_status: pick((doc as any)?.data?.status),
+    data_document_status: pick((doc as any)?.data?.document_status),
+    data_state: pick((doc as any)?.data?.state),
+    data_is_completed: (doc as any)?.data?.is_completed ?? null,
+    data_completed: (doc as any)?.data?.completed ?? null,
+
+    // signer/recipient arrays (top-level or nested)
+    signers_len: Array.isArray((doc as any)?.signers) ? (doc as any).signers.length : null,
+    recipients_len: Array.isArray((doc as any)?.recipients) ? (doc as any).recipients.length : null,
+    data_signers_len: Array.isArray((doc as any)?.data?.signers) ? (doc as any).data.signers.length : null,
+    data_recipients_len: Array.isArray((doc as any)?.data?.recipients) ? (doc as any).data.recipients.length : null,
+
+    first_signer: first((doc as any)?.signers),
+    first_recipient: first((doc as any)?.recipients),
+    first_data_signer: first((doc as any)?.data?.signers),
+    first_data_recipient: first((doc as any)?.data?.recipients),
+  });
+}
 console.log("[waiver-check] doc snapshot", {
   docId,
   topKeys: Object.keys(doc ?? {}),
@@ -133,6 +169,7 @@ console.log("[waiver-check] doc snapshot", {
       checked,
       marked_signed,
       errors,
+      debug_docs,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
