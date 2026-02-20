@@ -8,18 +8,33 @@ export const dynamic = "force-dynamic";
 const WAIVER_YEAR = new Date().getFullYear();
 
 function looksCompleted(doc: any) {
-  // SignNow responses vary; this covers common shapes.
+  // 1) Field invite status is the most reliable for your flow
+  // (invite statuses are commonly: created | pending | fulfilled)
+  const fieldInvites: any[] =
+    (Array.isArray(doc?.field_invites) ? doc.field_invites : []) ||
+    (Array.isArray(doc?.fieldInvites) ? doc.fieldInvites : []);
+
+  if (fieldInvites.length > 0) {
+    // If ANY field invite is fulfilled, the signer completed their part.
+    // If you ever add multi-signer docs, you can tighten this to "every fulfilled".
+    return fieldInvites.some((fi) =>
+      String(fi?.status ?? "").toLowerCase().includes("fulfilled")
+    );
+  }
+
+  // 2) Fallback: top-level status shapes (varies by account/API version)
   const status = String(doc?.status ?? doc?.document_status ?? doc?.state ?? "").toLowerCase();
-  const completed =
+  if (
     status.includes("completed") ||
     status.includes("signed") ||
-    status.includes("fulfilled") ||
-    doc?.is_completed === true ||
-    doc?.completed === true;
+    status.includes("fulfilled")
+  ) return true;
 
-  return completed;
+  // 3) Fallback booleans
+  if (doc?.is_completed === true || doc?.completed === true) return true;
+
+  return false;
 }
-
 export async function POST(req: Request) {
   try {
     const supabase = await createSupabaseServerClient();
