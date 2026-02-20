@@ -13,7 +13,7 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  type Busy = "booking" | "waiver" | "credit" | "checkwaiver" | null;
+  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
