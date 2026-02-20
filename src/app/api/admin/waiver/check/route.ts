@@ -9,17 +9,71 @@ export const dynamic = "force-dynamic";
 const WAIVER_YEAR = new Date().getFullYear();
 
 function looksCompleted(doc: any): boolean {
-  // 1) Top-level status checks
-  const status = String(doc?.status ?? doc?.document_status ?? doc?.state ?? "").toLowerCase();
+  // 1) Direct status flags
+  const status = String(
+    doc?.status ??
+      doc?.document_status ??
+      doc?.state ??
+      doc?.data?.status ??
+      ""
+  ).toLowerCase();
 
   if (
     status.includes("completed") ||
     status.includes("signed") ||
-    status.includes("fulfilled") ||
-    status === "complete"
+    status.includes("fulfilled")
   ) {
     return true;
   }
+
+  // 2) Field invites (most common in your SignNow flow)
+  const invites =
+    doc?.field_invites ??
+    doc?.data?.field_invites ??
+    doc?.fieldInvites ??
+    null;
+
+  if (Array.isArray(invites) && invites.length > 0) {
+    const allDone = invites.every((i: any) => {
+      const s = String(i?.status ?? i?.state ?? "").toLowerCase();
+      return (
+        s.includes("fulfilled") ||
+        s.includes("completed") ||
+        s.includes("signed")
+      );
+    });
+
+    if (allDone) return true;
+  }
+
+  // 3) Signature objects (alternate shape)
+  const sigs = doc?.signatures ?? doc?.data?.signatures ?? null;
+
+  if (Array.isArray(sigs) && sigs.length > 0) {
+    const allSigned = sigs.every((s: any) => {
+      const st = String(s?.status ?? "").toLowerCase();
+      return (
+        st.includes("signed") ||
+        st.includes("completed") ||
+        st.includes("fulfilled")
+      );
+    });
+
+    if (allSigned) return true;
+  }
+
+  // 4) Boolean completion flags
+  if (
+    doc?.is_completed === true ||
+    doc?.completed === true ||
+    doc?.data?.is_completed === true ||
+    doc?.data?.completed === true
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
   // 2) Boolean flags
   if (doc?.is_completed === true || doc?.completed === true) {
