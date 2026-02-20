@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import { signNowGetDocument } from "@/lib/signnow";
 
 export const runtime = "nodejs";
@@ -63,15 +64,16 @@ function looksCompleted(doc: any): boolean {
 }
 export async function POST(req: Request) {
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabaseAuth = await createSupabaseServerClient();
+    const admin = createSupabaseAdminClient();
 
     // Auth
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await supabaseAuth.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: me } = await supabase
+    const { data: me } = await supabaseAuth
       .from("members")
       .select("is_admin")
       .eq("user_id", user.id)
@@ -84,7 +86,7 @@ export async function POST(req: Request) {
     const member_id = body?.member_id ? String(body.member_id) : null;
 
     // Load unsigned waivers (this year) that have a SignNow document id
-    let q = supabase
+    let q = admin
       .from("waivers")
       .select("id, member_id, status, external_document_id")
       .eq("waiver_year", WAIVER_YEAR)
@@ -110,7 +112,7 @@ export async function POST(req: Request) {
       try {
         const doc = await signNowGetDocument(docId);
         if (looksCompleted(doc)) {
-          const { error: upErr } = await supabase
+          const { error: upErr } = await admin
             .from("waivers")
             .update({
               status: "signed",
