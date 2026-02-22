@@ -7,46 +7,84 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const WAIVER_YEAR = new Date().getFullYear();
+function summarizeSignNowDoc(doc: any) {
+  const topStatus = doc?.status ?? doc?.document_status ?? doc?.state ?? null;
+  const dataStatus = doc?.data?.status ?? doc?.data?.document_status ?? doc?.data?.state ?? null;
 
+  const invites = doc?.invites ?? doc?.data?.invites ?? null;
+  const signers = doc?.signers ?? doc?.data?.signers ?? null;
+  const recipients = doc?.recipients ?? doc?.data?.recipients ?? null;
+
+  const pickStatuses = (arr: any) =>
+    Array.isArray(arr)
+      ? arr.slice(0, 5).map((x: any) => ({
+          status: x?.status ?? x?.signing_status ?? x?.state ?? null,
+          signed: x?.signed ?? null,
+          // DO NOT log emails/names
+        }))
+      : null;
+
+  return {
+    keys: doc ? Object.keys(doc).slice(0, 30) : [],
+    status: topStatus,
+    data_status: dataStatus,
+    has_invites: Array.isArray(invites) ? invites.length : null,
+    invite_statuses: pickStatuses(invites),
+    has_signers: Array.isArray(signers) ? signers.length : null,
+    signer_statuses: pickStatuses(signers),
+    has_recipients: Array.isArray(recipients) ? recipients.length : null,
+    recipient_statuses: pickStatuses(recipients),
+  };
+}
 function looksCompleted(doc: any): boolean {
-  // Normalize a few common shapes SignNow returns
   const status = String(
     doc?.status ??
       doc?.document_status ??
       doc?.state ??
       doc?.data?.status ??
+      doc?.data?.document_status ??
+      doc?.data?.state ??
       ""
   ).toLowerCase();
 
+  // 1) Obvious status words
   if (
     status.includes("completed") ||
+    status.includes("complete") ||
     status.includes("signed") ||
     status.includes("fulfilled") ||
-    status === "complete"
+    status.includes("done")
   ) {
     return true;
   }
 
-  // Some responses use boolean flags
+  // 2) Boolean flags
   if (doc?.is_completed === true || doc?.completed === true) return true;
   if (doc?.data?.is_completed === true || doc?.data?.completed === true) return true;
 
-  // Some responses expose signer/recipient statuses
-  const signers =
-    doc?.signers ??
-    doc?.data?.signers ??
-    doc?.recipients ??
-    doc?.data?.recipients ??
-    null;
-
-  if (Array.isArray(signers) && signers.length > 0) {
-    const allSigned = signers.every((s: any) => {
-      const sStatus = String(s?.status ?? s?.signing_status ?? "").toLowerCase();
-      return s?.signed === true || sStatus.includes("signed") || sStatus.includes("completed");
+  // Helper: does an array of participants look fully signed?
+  const allSignedLike = (arr: any) => {
+    if (!Array.isArray(arr) || arr.length === 0) return false;
+    return arr.every((x: any) => {
+      const s = String(x?.status ?? x?.signing_status ?? x?.state ?? "").toLowerCase();
+      return (
+        x?.signed === true ||
+        s.includes("signed") ||
+        s.includes("completed") ||
+        s.includes("complete") ||
+        s.includes("fulfilled")
+      );
     });
+  };
 
-    if (allSigned) return true;
-  }
+  // 3) Signers / recipients
+  const signers = doc?.signers ?? doc?.data?.signers ?? null;
+  const recipients = doc?.recipients ?? doc?.data?.recipients ?? null;
+  if (allSignedLike(signers) || allSignedLike(recipients)) return true;
+
+  // 4) Invites (very common in SignNow)
+  const invites = doc?.invites ?? doc?.data?.invites ?? null;
+  if (allSignedLike(invites)) return true;
 
   return false;
 }
@@ -99,6 +137,7 @@ const debug_docs: any[] = [];
 
       try {
         const doc = await signNowGetDocument(docId);
+console.log("[waiver-check] signnow doc summary", { waiver_id: w.id, docId, summary: summarizeSignNowDoc(doc) });
 if (debug_docs.length < 3) {
   const pick = (v: any) => (v == null ? v : String(v));
   const first = (arr: any) => (Array.isArray(arr) && arr.length ? arr[0] : null);
