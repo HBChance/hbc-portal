@@ -172,8 +172,6 @@ export async function POST(req: Request) {
 // ✅ PAYER TRACKING (separate from member identity)
 const payerEmail = String(email).toLowerCase().trim();
 const payerName = fullName ? String(fullName).trim() : null;
-const stripeCustomerId =
-  typeof session.customer === "string" ? session.customer : null;
 
 const { data: payerRow, error: payerErr } = await supabaseAdmin
   .from("payers")
@@ -322,24 +320,22 @@ if (ppErr)
       }
 
 
-         // PHASE 1.5 — Store guest profile for future prefill
-      const stripeCustomerId =
-        typeof session.customer === "string" ? session.customer : null;
+       // PHASE 1.5 — Store guest profile for future prefill
+// (do NOT redeclare stripeCustomerId here)
 
-      // Upsert by normalized email so repeated purchases just update the same row
-      await supabaseAdmin
-        .from("guest_profiles")
-        .upsert(
-          {
-            email,
-            full_name: fullName,
-            phone,
-            stripe_customer_id: stripeCustomerId,
-            last_stripe_session_id: session.id,
-            last_purchase_at: new Date().toISOString(),
-          },
-          { onConflict: "email_normalized" }
-        );
+await supabaseAdmin
+  .from("guest_profiles")
+  .upsert(
+    {
+      email,
+      full_name: fullName,
+      phone,
+      stripe_customer_id: stripeCustomerId,
+      last_stripe_session_id: session.id,
+      last_purchase_at: new Date().toISOString(),
+    },
+    { onConflict: "email_normalized" }
+  );
 
       // PHASE 1.5B — Create one-time booking pass + email it (idempotent)
       const { data: existingPass } = await supabaseAdmin
