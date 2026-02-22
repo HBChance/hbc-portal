@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { signNowCopyTemplateToDocument, signNowSendDocumentInvite } from "@/lib/signnow";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 
 const WAIVER_YEAR = 2026;
 
@@ -12,7 +13,7 @@ function mustGetEnv(name: string) {
 
 export async function POST(req: Request) {
   const supabase = await createSupabaseServerClient();
-
+  const admin = createSupabaseAdminClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -42,87 +43,87 @@ export async function POST(req: Request) {
   const recipient_name =
     [member.first_name, member.last_name].filter(Boolean).join(" ").trim() || null;
 
-  // Check existing waiver row for this year
-  const { data: existing } = await supabase
+  // Load all waiver rows for this member+year that still need a doc_id
+  const { data: pending, error: pendErr } = await admin
     .from("waivers")
-    .select("status,sent_at,signed_at,external_document_id")
-    .eq("recipient_email", recipient_email)
-    .eq("waiver_year", WAIVER_YEAR)
-    .maybeSingle();
+    .select("id, attendee_name, status, external_document_id, calendly_invitee_uri")
+    .eq("member_id", member_id)
+    .eq("waiver_year", WAIVER_YEAR);
 
-  if (existing?.status === "signed") {
-    return NextResponse.json({ error: "Waiver already signed for this year." }, { status: 409 });
-  }
-  if (existing?.status === "sent") {
-    return NextResponse.json({ error: "Waiver already sent for this year." }, { status: 409 });
+  if (pendErr) return NextResponse.json({ error: pendErr.message }, { status: 400 });
+
+  const needsSend = (pending ?? []).filter((w: any) => {
+    const st = String(w.status ?? "").toLowerCase();
+    const hasDoc = String(w.external_document_id ?? "").trim().length > 0;
+    return st !== "signed" && !hasDoc;
+  });
+
+  if (needsSend.length === 0) {
+    return NextResponse.json({ error: "No waivers need to be sent." }, { status: 409 });
   }
 
-  // Send signNow invite
+  // Send signNow invite(s) for each missing doc
   const templateId = mustGetEnv("SIGNNOW_WAIVER_TEMPLATE_ID");
   const fromEmail = mustGetEnv("SIGNNOW_FROM_EMAIL");
-  const roleName = mustGetEnv("SIGNNOW_WAIVER_ROLE_NAME"); // "Participant"
+  const roleName = mustGetEnv("SIGNNOW_WAIVER_ROLE_NAME") || "Participant";
 
-  const subject = "Happens By Chance — Annual Waiver";
-  const message =
-    `Hello${recipient_name ? ` ${recipient_name}` : ""},\n\n` +
-    `Please sign your annual waiver for ${WAIVER_YEAR}.\n\n` +
-    `— Happens By Chance Health & Wellness`;
+  let sentCount = 0;
+  const errors: Array<{ waiver_id: string; error: string }> = [];
 
-  let documentId: string;
-  try {
-    const copy = await signNowCopyTemplateToDocument({
-      templateId,
-      documentName: `HBC Waiver ${WAIVER_YEAR} — ${recipient_email}`,
-    });
-    documentId = copy.document_id;
+  for (const w of needsSend) {
+    try {
+      const who = String((w as any).attendee_name ?? "").trim() || (recipient_name ?? "Participant");
 
-    await signNowSendDocumentInvite({
-      documentId,
-      fromEmail,
-      toEmail: recipient_email,
-      subject,
-      message,
-      roleName,
-      expirationDays: 30,
-    });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "signNow send failed" }, { status: 400 });
+      const subject = `Happens By Chance — Annual Waiver (${WAIVER_YEAR})`;
+      const message =
+        `Hello${recipient_name ? ` ${recipient_name}` : ""},\n\n` +
+        `Please sign the annual waiver for ${WAIVER_YEAR}.\n` +
+        `Participant: ${who}\n\n` +
+        `— Happens By Chance Health & Wellness`;
+
+      const copy = await signNowCopyTemplateToDocument({
+        templateId,
+        documentName: `HBC Waiver ${WAIVER_YEAR} — ${recipient_email} — ${who}`,
+      });
+
+      const documentId = copy.document_id;
+
+      await signNowSendDocumentInvite({
+        documentId,
+        fromEmail,
+        toEmail: recipient_email, // <-- per your preference: member receives all waivers
+        subject,
+        message,
+        roleName,
+        expirationDays: 30,
+      });
+
+      const nowIso = new Date().toISOString();
+
+      const { error: upErr } = await admin
+        .from("waivers")
+        .update({
+          status: "sent",
+          external_provider: "signnow",
+          external_document_id: documentId,
+          sent_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq("id", w.id);
+
+      if (upErr) {
+        errors.push({ waiver_id: w.id, error: upErr.message });
+      } else {
+        sentCount += 1;
+      }
+    } catch (e: any) {
+      errors.push({ waiver_id: w.id, error: e?.message ?? "send failed" });
+    }
   }
 
-  const nowIso = new Date().toISOString();
+  if (sentCount === 0) {
+    return NextResponse.json({ error: "Failed to send any waivers.", details: errors }, { status: 400 });
+  }
 
-// Legacy admin-send waiver is "member-only" (no calendly_invitee_uri)
-const payload = {
-  member_id,
-  waiver_year: WAIVER_YEAR,
-  status: "sent",
-  recipient_email,
-  recipient_name,
-  external_provider: "signnow",
-  external_document_id: documentId,
-  sent_at: nowIso,
-  calendly_invitee_uri: null,
-};
-
-// 1) Try update existing legacy row first (email+year where calendly_invitee_uri is NULL)
-const { data: updated, error: updErr } = await supabase
-  .from("waivers")
-  .update(payload)
-  .eq("recipient_email", recipient_email)
-  .eq("waiver_year", WAIVER_YEAR)
-  .is("calendly_invitee_uri", null)
-  .select("id")
-  .maybeSingle();
-
-if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
-
-if (!updated?.id) {
-  // 2) If none existed, insert a new legacy row
-  const { error: insErr } = await supabase
-    .from("waivers")
-    .insert(payload);
-
-  if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
-}
-  return NextResponse.json({ ok: true, document_id: documentId });
+  return NextResponse.json({ ok: true, sent_count: sentCount, errors });
 }
