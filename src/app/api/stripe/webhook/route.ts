@@ -56,26 +56,30 @@ async function getOrCreateMemberByEmail(opts: {
   // Try existing member
   const { data: existing, error: existingError } = await supabaseAdmin
     .from("members")
-    .select("id,email")
+    .select("id,email,phone")
     .eq("email", emailNormalized)
     .maybeSingle();
 
   if (existingError) throw existingError;
-  if (existing?.id) return existing.id as string;
+  if (existing?.id) {
+    // Stripe may have a better phone number — safe to backfill phone only
+    if (!existing.phone && opts.phone) {
+      await supabaseAdmin
+        .from("members")
+        .update({ phone: opts.phone })
+        .eq("id", existing.id);
+    }
+    return existing.id as string;
+  }
 
-  // Create guest-style member
-  const fullName = (opts.fullName ?? "").trim();
-  const parts = fullName ? fullName.split(/\s+/) : [];
-  const firstName = parts.length ? parts[0] : null;
-  const lastName = parts.length > 1 ? parts.slice(1).join(" ") : null;
-
+  // Create member row WITHOUT names — Calendly will populate attendee name later
   const { data: created, error: createError } = await supabaseAdmin
     .from("members")
     .insert({
       user_id: null,
       email: emailNormalized,
-      first_name: firstName,
-      last_name: lastName,
+      first_name: null,
+      last_name: null,
       phone: opts.phone ?? null,
       newsletter_opt_in: false,
       is_admin: false,
