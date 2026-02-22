@@ -92,7 +92,6 @@ function isInsufficientCredits(message: string | null | undefined) {
 export async function POST(req: Request) {
 console.log("[calendly] incoming url", req.url);
 
-const supabase = createSupabaseAdminClient();
 
   // Token gate
   const token = getQueryToken(req);
@@ -116,6 +115,8 @@ const supabase = createSupabaseAdminClient();
   }
 
   const parsed = parseCalendly(body);
+const supabase = createSupabaseAdminClient();
+
 // Attendee name from Calendly booking form (guest/minor name lives here)
 const attendeeName =
   (String(body?.payload?.name ?? "").trim() ||
