@@ -263,9 +263,6 @@ if (!Number.isFinite(credits) || credits <= 0) {
 }
 // --- end credits computation ---
 
-
-      if (credits > 0) {
-
       const memberId = await getOrCreateMemberByEmail({
         email,
         fullName,
@@ -421,8 +418,6 @@ if (ppErr)
       await markProcessed(event.id, event.type);
       return new Response("OK", { status: 200 });
     }
-
-    } // <-- ADD THIS LINE to close: if (credits > 0) {
 
     // SUBSCRIPTIONS / RENEWALS
     if (event.type === "invoice.payment_succeeded") {
