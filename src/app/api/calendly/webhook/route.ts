@@ -119,7 +119,28 @@ const attendeeName =
   (String(body?.payload?.name ?? "").trim() ||
     `${String(body?.payload?.first_name ?? "").trim()} ${String(body?.payload?.last_name ?? "").trim()}`.trim() ||
     null);
+// ✅ Always let Calendly be the source of truth for member first/last name
+try {
+  const emailLower = String(parsed.inviteeEmail ?? "").toLowerCase().trim();
+  const full = String(attendeeName ?? "").trim();
 
+  if (emailLower && full) {
+    const parts = full.split(/\s+/).filter(Boolean);
+    const first = parts.length ? parts[0] : null;
+    const last = parts.length > 1 ? parts.slice(1).join(" ") : null;
+
+    await supabase
+      .from("members")
+      .update({
+        first_name: first,
+        last_name: last,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("email", emailLower);
+  }
+} catch (e: any) {
+  console.error("[calendly] failed to sync member name from calendly", e?.message);
+}
 console.log("[calendly] parsed identity", {
   eventType: parsed.eventType,
   inviteeEmail: parsed.inviteeEmail,
