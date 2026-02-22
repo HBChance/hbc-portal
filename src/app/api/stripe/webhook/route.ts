@@ -169,26 +169,6 @@ export async function POST(req: Request) {
       if (!email) throw new Error("No customer email on checkout session");
 	const fullName = session.customer_details?.name ?? null;
 	const phone = session.customer_details?.phone ?? null;
-// ✅ PAYER TRACKING (separate from member identity)
-const payerEmail = String(email).toLowerCase().trim();
-const payerName = fullName ? String(fullName).trim() : null;
-
-const { data: payerRow, error: payerErr } = await supabaseAdmin
-  .from("payers")
-  .upsert(
-    {
-      payer_email: payerEmail,
-      payer_name: payerName,
-      stripe_customer_id: stripeCustomerId,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "payers_payer_email_uq" } // ⚠️ see note below
-  )
-  .select("id")
-  .single();
-
-if (payerErr) throw new Error(`Failed upserting payer: ${payerErr.message}`);
-
 const payerId = payerRow.id as string;
 
 const { error: ppErr } = await supabaseAdmin
@@ -269,6 +249,7 @@ if (!Number.isFinite(credits) || credits <= 0) {
 // ✅ PAYER TRACKING (separate from member identity)
 const payerEmail = String(email).toLowerCase().trim();
 const payerName = fullName ? String(fullName).trim() : null;
+
 const stripeCustomerId =
   typeof session.customer === "string" ? session.customer : null;
 
@@ -281,7 +262,7 @@ const { data: payerRow, error: payerErr } = await supabaseAdmin
       stripe_customer_id: stripeCustomerId,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: "payer_email_normalized" }
+    { onConflict: "payer_email" }
   )
   .select("id")
   .single();
@@ -307,8 +288,7 @@ const { error: ppErr } = await supabaseAdmin
     { onConflict: "stripe_session_id" }
   );
 
-if (ppErr)
-  throw new Error(`Failed upserting payer_purchases: ${ppErr.message}`);
+if (ppErr)  throw new Error(`Failed upserting payer_purchases: ${ppErr.message}`);
       const alreadyGranted = await creditGrantExistsForSession(memberId, session.id);
 
       if (!alreadyGranted) {
