@@ -92,6 +92,8 @@ function isInsufficientCredits(message: string | null | undefined) {
 export async function POST(req: Request) {
 console.log("[calendly] incoming url", req.url);
 
+const supabase = createSupabaseAdminClient();
+
   // Token gate
   const token = getQueryToken(req);
   const expected = process.env.CALENDLY_WEBHOOK_TOKEN;
@@ -151,7 +153,6 @@ console.log("[calendly] parsed identity", {
   payloadKeys: parsed.payloadKeys,
 });
 
-const supabase = createSupabaseAdminClient();
 
 // Default: redeem against the invitee (normal flow)
 let redeemEmail = parsed.inviteeEmail;
