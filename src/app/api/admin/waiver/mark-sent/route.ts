@@ -101,15 +101,17 @@ export async function POST(req: Request) {
       const nowIso = new Date().toISOString();
 
       const { error: upErr } = await admin
-        .from("waivers")
-        .update({
-          status: "sent",
-          external_provider: "signnow",
-          external_document_id: documentId,
-          sent_at: nowIso,
-          updated_at: nowIso,
-        })
-        .eq("id", w.id);
+  .from("waivers")
+  .update({
+    status: "sent",
+    external_provider: "signnow",
+    external_document_id: documentId,
+    sent_at: nowIso,
+    updated_at: nowIso,
+    attendee_name: (String((w as any).attendee_name ?? "").trim() || recipient_name || null),
+    recipient_name: recipient_name, // optional but good to keep consistent
+  })
+  .eq("id", w.id);
 
       if (upErr) {
         errors.push({ waiver_id: w.id, error: upErr.message });
