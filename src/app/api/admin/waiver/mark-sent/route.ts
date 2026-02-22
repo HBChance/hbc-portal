@@ -91,23 +91,54 @@ export async function POST(req: Request) {
 
   const nowIso = new Date().toISOString();
 
-  const { error: upsertErr } = await supabase
+  // Legacy/admin-send waiver rows are identified by (recipient_email, waiver_year) AND calendly_invitee_uri IS NULL.
+// We cannot use upsert(onConflict: "recipient_email,waiver_year") because that uniqueness is enforced by a PARTIAL index.
+// So: select -> update or insert.
+
+const { data: existingLegacy, error: legErr } = await supabase
+  .from("waivers")
+  .select("id,status,signed_at")
+  .eq("recipient_email", recipient_email)
+  .eq("waiver_year", WAIVER_YEAR)
+  .is("calendly_invitee_uri", null)
+  .maybeSingle();
+
+if (legErr) return NextResponse.json({ error: legErr.message }, { status: 400 });
+
+if (existingLegacy?.status === "signed" || existingLegacy?.signed_at) {
+  return NextResponse.json({ error: "Waiver already signed for this year." }, { status: 409 });
+}
+
+if (existingLegacy?.id) {
+  const { error: updErr } = await supabase
     .from("waivers")
-    .upsert(
-      {
-        member_id,
-        waiver_year: WAIVER_YEAR,
-        status: "sent",
-        recipient_email,
-        recipient_name,
-        external_provider: "signnow",
-        external_document_id: documentId,
-        sent_at: nowIso,
-      },
-      { onConflict: "recipient_email,waiver_year" }
-    );
+    .update({
+      member_id,
+      status: "sent",
+      recipient_email,
+      recipient_name,
+      external_provider: "signnow",
+      external_document_id: documentId,
+      sent_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("id", existingLegacy.id);
 
-  if (upsertErr) return NextResponse.json({ error: upsertErr.message }, { status: 400 });
+  if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
+} else {
+  const { error: insErr } = await supabase.from("waivers").insert({
+    member_id,
+    waiver_year: WAIVER_YEAR,
+    status: "sent",
+    recipient_email,
+    recipient_name,
+    external_provider: "signnow",
+    external_document_id: documentId,
+    sent_at: nowIso,
+    calendly_invitee_uri: null,
+  });
 
+  if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
+}
   return NextResponse.json({ ok: true, document_id: documentId });
 }
