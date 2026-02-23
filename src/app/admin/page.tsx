@@ -269,46 +269,137 @@ export default async function AdminHome() {
                       <div style={{ fontWeight: 700 }}>{r.full_name ?? "—"}</div>
                       <div style={{ fontSize: 12, color: "#64748b" }}>{r.email ?? r.member_id}</div>
 {(() => {
-  const guests = Array.isArray((r as any).guests) ? (r as any).guests : [];
-  return (
-  <details style={{ marginTop: 6 }}>
-    <summary style={{ cursor: "pointer", fontSize: 12, color: "#64748b" }}>
-      Guests ({(r as any).guests.length})
-    </summary>
+  const guestsRaw = Array.isArray((r as any).guests) ? (r as any).guests : [];
 
-    <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-      {(r as any).guests.map((g: any) => (
-        <div
-          key={g.calendly_invitee_uri ?? `${g.invitee_email}-${g.event_start_at}`}
-          style={{
-            padding: 8,
-            border: "1px solid #e5e7eb",
-            borderRadius: 10,
-            background: "#fff",
-          }}
-        >
-          <div style={{ fontWeight: 700, fontSize: 12 }}>
-            {g.invitee_name ?? "Guest"}
-          </div>
-          <div style={{ fontSize: 12, color: "#64748b" }}>
-            {g.invitee_email ?? "—"}
-          </div>
-          <div style={{ fontSize: 12, color: "#64748b" }}>
-            {fmt(g.event_start_at ?? null)}
-          </div>
-          <div style={{ marginTop: 6 }}>
-            {g.waiver_status === "signed" ? (
-              <Badge tone="green">Waiver Signed</Badge>
-            ) : g.waiver_status === "sent" ? (
-              <Badge tone="blue">Waiver Sent</Badge>
-            ) : (
-              <Badge tone="amber">Waiver Missing</Badge>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  </details>
+  // Group by "person" so repeat guests show once, with multiple dates.
+  const keyOf = (g: any) => {
+    const name = String(g?.invitee_name ?? "").trim().toLowerCase();
+    const email = String(g?.invitee_email ?? "").trim().toLowerCase();
+    // prefer email if present; else name; else fallback
+    return email || name || String(g?.calendly_invitee_uri ?? "unknown");
+  };
+
+  const groups = new Map<
+    string,
+    {
+      displayName: string;
+      displayEmail: string;
+      visits: any[];
+      // roll-up waiver status across visits
+      waiverRollup: "signed" | "sent" | "missing";
+    }
+  >();
+
+  const rollup = (current: "signed" | "sent" | "missing", next: any) => {
+    const s = (next?.waiver_status as "signed" | "sent" | "missing" | undefined) ?? "missing";
+    // signed beats sent beats missing
+    if (current === "signed") return "signed";
+    if (s === "signed") return "signed";
+    if (current === "sent") return "sent";
+    if (s === "sent") return "sent";
+    return "missing";
+  };
+
+  for (const g of guestsRaw) {
+    const k = keyOf(g);
+    const displayName = String(g?.invitee_name ?? "Guest").trim() || "Guest";
+    const displayEmail = String(g?.invitee_email ?? "—").trim() || "—";
+
+    const existing = groups.get(k);
+    if (!existing) {
+      groups.set(k, {
+        displayName,
+        displayEmail,
+        visits: [g],
+        waiverRollup: rollup("missing", g),
+      });
+    } else {
+      existing.visits.push(g);
+      existing.waiverRollup = rollup(existing.waiverRollup, g);
+    }
+  }
+
+  // Convert to array and sort guests by name, then sort visits by date desc
+  const grouped = Array.from(groups.values()).map((grp) => {
+    const visitsSorted = [...grp.visits].sort((a: any, b: any) => {
+      const ta = a?.event_start_at ? Date.parse(a.event_start_at) : 0;
+      const tb = b?.event_start_at ? Date.parse(b.event_start_at) : 0;
+      return tb - ta;
+    });
+    return { ...grp, visits: visitsSorted };
+  });
+
+  grouped.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  const uniqueCount = grouped.length;
+  const totalVisits = guestsRaw.length;
+
+  if (totalVisits === 0) return null;
+
+  return (
+    <details style={{ marginTop: 6 }}>
+      <summary style={{ cursor: "pointer", fontSize: 12, color: "#64748b" }}>
+        Guests ({uniqueCount}) • Visits ({totalVisits})
+      </summary>
+
+      <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+        {grouped.map((grp) => (
+          <details
+            key={`${grp.displayEmail}-${grp.displayName}`}
+            style={{
+              border: "1px solid #e5e7eb",
+              borderRadius: 10,
+              background: "#fff",
+              padding: 8,
+            }}
+          >
+            <summary style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 12 }}>
+                {grp.displayName} <span style={{ fontWeight: 500, color: "#64748b" }}>({grp.visits.length})</span>
+              </span>
+
+              {grp.waiverRollup === "signed" ? (
+                <Badge tone="green">Waiver Signed</Badge>
+              ) : grp.waiverRollup === "sent" ? (
+                <Badge tone="blue">Waiver Sent</Badge>
+              ) : (
+                <Badge tone="amber">Waiver Missing</Badge>
+              )}
+            </summary>
+
+            <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>{grp.displayEmail}</div>
+
+            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+              {grp.visits.map((v: any) => (
+                <div
+                  key={v.calendly_invitee_uri ?? `${v.invitee_email}-${v.event_start_at}`}
+                  style={{
+                    padding: 8,
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 10,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 700 }}>
+                    {fmt(v.event_start_at ?? null)}
+                  </div>
+
+                  <div style={{ marginTop: 6 }}>
+                    {v.waiver_status === "signed" ? (
+                      <Badge tone="green">Waiver Signed</Badge>
+                    ) : v.waiver_status === "sent" ? (
+                      <Badge tone="blue">Waiver Sent</Badge>
+                    ) : (
+                      <Badge tone="amber">Waiver Missing</Badge>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </details>
+        ))}
+      </div>
+    </details>
   );
 })()}
                     </td>
