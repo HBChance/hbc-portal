@@ -272,31 +272,6 @@ const guestEmail = parsed.inviteeEmail;
            // Always 200 so Calendly doesn't hammer retries forever (your current behavior)
       return jsonResponse({ ok: true, error: error.message }, 200);
     }
-// Store attendee name on RSVP row (needed so /admin can distinguish self vs guest)
-if (parsed.calendlyInviteeUri) {
-  const { error: rsvpNameErr } = await supabase
-    .from("rsvps")
-    .update({ invitee_name: attendeeName })
-    .eq("calendly_invitee_uri", parsed.calendlyInviteeUri);
-
-  if (rsvpNameErr) {
-    console.error("[calendly] failed to set RSVP invitee_name", rsvpNameErr.message);
-  } else {
-    console.log("[calendly] RSVP invitee_name updated", { attendeeName });
-  }
-}
-// Consume booking pass ONLY on successful RSVP credit redemption (not on link click)
-if (parsed.token) {
-  const { error: passUpdErr } = await supabase
-    .from("booking_passes")
-    .update({ used_at: new Date().toISOString() })
-    .eq("token", parsed.token)
-    .is("used_at", null);
-
-  if (passUpdErr) {
-    console.error("[calendly] failed to mark booking pass used", passUpdErr.message);
-  }
-}
 // ✅ Redemption succeeded — waiver send (per Calendly invitee URI, not per email)
 try {
 const waiverYear = new Date().getFullYear();
@@ -522,18 +497,65 @@ if (signedForYear) {
 }
 
 // If the booking-pass flow was used, the RPC probably wrote invitee_email = redeemEmail.
-// Correct the RSVP row to reflect the actual guest attendee email from Calendly.
-if (parsed.calendlyInviteeUri && guestEmail && redeemEmail && guestEmail !== redeemEmail) {
-  const { error: rsvpFixErr } = await supabase
-    .from("rsvps")
-    .update({ invitee_email: guestEmail })
-    .eq("calendly_invitee_uri", parsed.calendlyInviteeUri);
+// -----------------------------
+// POST-SUCCESS FIXUPS (invitee.created)
+// - store attendee name on RSVP
+// - burn booking pass token (only after successful redemption)
+// - if booking for guest, set RSVP invitee_email back to guest email (Calendly)
+// -----------------------------
+try {
+  // 1) Store attendee name on RSVP so /admin can distinguish member vs guest booking
+  if (parsed.calendlyInviteeUri) {
+    const { error: rsvpNameErr } = await supabase
+      .from("rsvps")
+      .update({ invitee_name: attendeeName ?? null })
+      .eq("calendly_invitee_uri", parsed.calendlyInviteeUri);
 
-  if (rsvpFixErr) {
-    console.error("[calendly] failed to update RSVP invitee_email to guest", rsvpFixErr.message);
-  } else {
-    console.log("[calendly] RSVP invitee_email corrected to guest", { guestEmail });
+    if (rsvpNameErr) {
+      console.error("[calendly] failed to set RSVP invitee_name", rsvpNameErr.message);
+    } else {
+      console.log("[calendly] RSVP invitee_name updated", { attendeeName });
+    }
   }
+
+  // 2) Consume booking pass ONLY after successful RSVP credit redemption
+  if (parsed.token) {
+    const { error: passUpdErr } = await supabase
+      .from("booking_passes")
+      .update({ used_at: new Date().toISOString() })
+      .eq("token", parsed.token)
+      .is("used_at", null);
+
+    if (passUpdErr) {
+      console.error("[calendly] failed to mark booking pass used", passUpdErr.message);
+    } else {
+      console.log("[calendly] booking pass marked used", { token: parsed.token });
+    }
+  }
+
+  // 3) If booking-pass flow used, RPC likely recorded invitee_email = redeemEmail (member/purchaser).
+  //    Correct RSVP invitee_email to the ACTUAL Calendly guest email.
+  if (
+    parsed.calendlyInviteeUri &&
+    guestEmail &&
+    redeemEmail &&
+    String(guestEmail).toLowerCase().trim() !== String(redeemEmail).toLowerCase().trim()
+  ) {
+    const guestEmailLower = String(guestEmail).toLowerCase().trim();
+
+    const { error: rsvpFixErr } = await supabase
+      .from("rsvps")
+      .update({ invitee_email: guestEmailLower })
+      .eq("calendly_invitee_uri", parsed.calendlyInviteeUri);
+
+    if (rsvpFixErr) {
+      console.error("[calendly] failed to update RSVP invitee_email to guest", rsvpFixErr.message);
+    } else {
+      console.log("[calendly] RSVP invitee_email corrected to guest", { guestEmail: guestEmailLower });
+    }
+  }
+} catch (e: any) {
+  console.error("[calendly] post-success fixups crashed", e?.message);
 }
     return jsonResponse({ ok: true, redeemed_rsvp_id: data }, 200);
   }
