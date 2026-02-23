@@ -271,133 +271,128 @@ export default async function AdminHome() {
 {(() => {
   const guestsRaw = Array.isArray((r as any).guests) ? (r as any).guests : [];
 
-  // Group by "person" so repeat guests show once, with multiple dates.
-  const keyOf = (g: any) => {
-    const name = String(g?.invitee_name ?? "").trim().toLowerCase();
-    const email = String(g?.invitee_email ?? "").trim().toLowerCase();
-    // prefer email if present; else name; else fallback
-    return email || name || String(g?.calendly_invitee_uri ?? "unknown");
+  // Group by (invitee_name + invitee_email) so the same guest can have multiple visits,
+  // but Chandler vs Chance stays separated even if emails are missing.
+  type GuestRow = {
+    calendly_invitee_uri: string | null;
+    invitee_email: string | null;
+    invitee_name: string | null;
+    event_start_at: string | null;
+    waiver_status?: "missing" | "sent" | "signed";
+    status: string;
   };
 
   const groups = new Map<
     string,
     {
-      displayName: string;
-      displayEmail: string;
-      visits: any[];
-      // roll-up waiver status across visits
-      waiverRollup: "signed" | "sent" | "missing";
+      labelName: string;
+      labelEmail: string | null;
+      visits: GuestRow[];
     }
   >();
 
-  const rollup = (current: "signed" | "sent" | "missing", next: any) => {
-    const s = (next?.waiver_status as "signed" | "sent" | "missing" | undefined) ?? "missing";
-    // signed beats sent beats missing
-    if (current === "signed") return "signed";
-    if (s === "signed") return "signed";
-    if (current === "sent") return "sent";
-    if (s === "sent") return "sent";
-    return "missing";
-  };
+  for (const g of guestsRaw as GuestRow[]) {
+    const nameKey = String(g.invitee_name ?? "").trim().toLowerCase();
+    const emailKey = String(g.invitee_email ?? "").trim().toLowerCase();
 
-  for (const g of guestsRaw) {
-    const k = keyOf(g);
-    const displayName = String(g?.invitee_name ?? "Guest").trim() || "Guest";
-    const displayEmail = String(g?.invitee_email ?? "—").trim() || "—";
+    // If name is missing, fall back to email; if both missing, use a stable bucket.
+    const key =
+      (nameKey ? `name:${nameKey}` : "") +
+      "|" +
+      (emailKey ? `email:${emailKey}` : "email:__none__");
 
-    const existing = groups.get(k);
-    if (!existing) {
-      groups.set(k, {
-        displayName,
-        displayEmail,
-        visits: [g],
-        waiverRollup: rollup("missing", g),
-      });
-    } else {
-      existing.visits.push(g);
-      existing.waiverRollup = rollup(existing.waiverRollup, g);
+    const labelName = String(g.invitee_name ?? "Guest").trim() || "Guest";
+    const labelEmail = g.invitee_email ? String(g.invitee_email).trim() : null;
+
+    if (!groups.has(key)) {
+      groups.set(key, { labelName, labelEmail, visits: [] });
     }
+    groups.get(key)!.visits.push(g);
   }
 
-  // Convert to array and sort guests by name, then sort visits by date desc
+  // Sort visits within each guest by event_start_at (newest first)
   const grouped = Array.from(groups.values()).map((grp) => {
-    const visitsSorted = [...grp.visits].sort((a: any, b: any) => {
-      const ta = a?.event_start_at ? Date.parse(a.event_start_at) : 0;
-      const tb = b?.event_start_at ? Date.parse(b.event_start_at) : 0;
-      return tb - ta;
+    grp.visits.sort((a, b) => {
+      const at = a.event_start_at ? Date.parse(a.event_start_at) : 0;
+      const bt = b.event_start_at ? Date.parse(b.event_start_at) : 0;
+      return bt - at;
     });
-    return { ...grp, visits: visitsSorted };
+    return grp;
   });
 
-  grouped.sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-  const uniqueCount = grouped.length;
-  const totalVisits = guestsRaw.length;
-
-  if (totalVisits === 0) return null;
+  // Sort guests alphabetically
+  grouped.sort((a, b) => a.labelName.localeCompare(b.labelName));
 
   return (
     <details style={{ marginTop: 6 }}>
       <summary style={{ cursor: "pointer", fontSize: 12, color: "#64748b" }}>
-        Guests ({uniqueCount}) • Visits ({totalVisits})
+        Guests ({guestsRaw.length})
       </summary>
 
-      <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-        {grouped.map((grp) => (
-          <details
-            key={`${grp.displayEmail}-${grp.displayName}`}
-            style={{
-              border: "1px solid #e5e7eb",
-              borderRadius: 10,
-              background: "#fff",
-              padding: 8,
-            }}
-          >
-            <summary style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 12 }}>
-                {grp.displayName} <span style={{ fontWeight: 500, color: "#64748b" }}>({grp.visits.length})</span>
-              </span>
+      <div style={{ marginTop: 8, display: "grid", gap: 10 }}>
+        {grouped.map((grp) => {
+          // “Worst” waiver status across visits (missing > sent > signed)
+          const waiverRank = (s: any) =>
+            s === "missing" ? 3 : s === "sent" ? 2 : s === "signed" ? 1 : 0;
 
-              {grp.waiverRollup === "signed" ? (
-                <Badge tone="green">Waiver Signed</Badge>
-              ) : grp.waiverRollup === "sent" ? (
-                <Badge tone="blue">Waiver Sent</Badge>
-              ) : (
-                <Badge tone="amber">Waiver Missing</Badge>
-              )}
-            </summary>
+          const worst = grp.visits.reduce((acc, v) => {
+            return waiverRank(v.waiver_status) > waiverRank(acc) ? (v.waiver_status ?? "missing") : acc;
+          }, "signed" as "missing" | "sent" | "signed");
 
-            <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>{grp.displayEmail}</div>
-
-            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-              {grp.visits.map((v: any) => (
-                <div
-                  key={v.calendly_invitee_uri ?? `${v.invitee_email}-${v.event_start_at}`}
-                  style={{
-                    padding: 8,
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 10,
-                    background: "#f8fafc",
-                  }}
-                >
-                  <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 700 }}>
-                    {fmt(v.event_start_at ?? null)}
-                  </div>
-
-                  <div style={{ marginTop: 6 }}>
-                    {v.waiver_status === "signed" ? (
-                      <Badge tone="green">Waiver Signed</Badge>
-                    ) : v.waiver_status === "sent" ? (
-                      <Badge tone="blue">Waiver Sent</Badge>
-                    ) : (
-                      <Badge tone="amber">Waiver Missing</Badge>
-                    )}
-                  </div>
+          return (
+            <div
+              key={`${grp.labelName}|${grp.labelEmail ?? ""}`}
+              style={{
+                padding: 10,
+                border: "1px solid #e5e7eb",
+                borderRadius: 12,
+                background: "#fff",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 12 }}>{grp.labelName}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>{grp.labelEmail ?? "—"}</div>
                 </div>
-              ))}
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Badge tone={worst === "signed" ? "green" : worst === "sent" ? "blue" : "amber"}>
+                    {worst === "signed" ? "Waiver Signed" : worst === "sent" ? "Waiver Sent" : "Waiver Missing"}
+                  </Badge>
+                  <Badge tone="slate">{grp.visits.length} visit{grp.visits.length === 1 ? "" : "s"}</Badge>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                {grp.visits.map((v) => (
+                  <div
+                    key={v.calendly_invitee_uri ?? `${v.invitee_email ?? "noemail"}-${v.event_start_at ?? "nodate"}`}
+                    style={{
+                      padding: 8,
+                      border: "1px solid #eef2f7",
+                      borderRadius: 10,
+                      background: "#f8fafc",
+                      fontSize: 12,
+                      color: "#0f172a",
+                    }}
+                  >
+                    <div style={{ color: "#64748b" }}>{fmt(v.event_start_at ?? null)}</div>
+                    <div style={{ marginTop: 4 }}>
+                      {v.waiver_status === "signed" ? (
+                        <Badge tone="green">Signed</Badge>
+                      ) : v.waiver_status === "sent" ? (
+                        <Badge tone="blue">Sent</Badge>
+                      ) : (
+                        <Badge tone="amber">Missing</Badge>
+                      )}
+                      <span style={{ marginLeft: 8, color: "#64748b" }}>{v.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </details>
-        ))}
+          );
+        })}
       </div>
     </details>
   );
