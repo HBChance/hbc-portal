@@ -399,7 +399,7 @@ export async function POST(req: Request) {
       return new Response("OK", { status: 200 });
     }
 
-// -----------------------------
+    // -----------------------------
     // SUBSCRIPTIONS / RENEWALS
     // -----------------------------
     if (event.type === "invoice.payment_succeeded") {
@@ -491,24 +491,29 @@ export async function POST(req: Request) {
             .join("");
 
           const html = `
-            <p>Thank you for your membership payment.</p>
+  <p>Thank you for your membership payment.</p>
 
-            <p><strong>Your booking links (${credits})</strong></p>
-            <ul>${linksHtml}</ul>
+  <p><strong>Your booking links (${credits})</strong></p>
+  <ul>${linksHtml}</ul>
 
-            <p><strong>Important:</strong> each link can be clicked <strong>once</strong> and expires in <strong>30 days</strong>. Please be ready to book when you click.</p>
+  <p><strong>Important:</strong></p>
+  <ul>
+    <li>Each link books one session and can be clicked <strong>once</strong>.</li>
+    <li>Links expire in <strong>30 days</strong>.</li>
+    <li>Please be ready to complete booking when you click a link.</li>
+  </ul>
 
-            <p><strong>Booking rules (for members + shared credits):</strong></p>
-            <ul>
-              <li>All bookings must be made under the <strong>member’s email</strong> (${emailLower}).</li>
-              <li>When booking for a guest, enter the <strong>guest’s name</strong> as the attendee.</li>
-              <li><strong>Waivers:</strong> each attendee must have a waiver on file. The waiver email is sent to the member by default. Forward it to adult guests, or sign for minors.</li>
-            </ul>
+  <p><strong>Booking Rules:</strong></p>
+  <ul>
+    <li>All bookings must be made under the <strong>member’s email</strong> (${emailLower}).</li>
+    <li>If you’re booking for a guest: use your member email, and put the guest’s name in the name field.</li>
+    <li>Each attendee must have a waiver on file. The waiver email is sent to the member by default. Forward it to adult guests, or sign for minors.</li>
+  </ul>
 
-            <p>If you click a link and can’t complete booking, email
-              <a href="mailto:help@happensbychance.com">help@happensbychance.com</a>.
-            </p>
-          `;
+  <p>If you click a link and cannot complete booking, email 
+    <a href="mailto:help@happensbychance.com">help@happensbychance.com</a>.
+  </p>
+`;
 
           await fetch(
             "https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass",
