@@ -400,137 +400,148 @@ export async function POST(req: Request) {
     }
 
 // -----------------------------
-// SUBSCRIPTIONS / RENEWALS
-// -----------------------------
-if (event.type === "invoice.payment_succeeded") {
-  const invoice = event.data.object as Stripe.Invoice;
+    // SUBSCRIPTIONS / RENEWALS
+    // -----------------------------
+    if (event.type === "invoice.payment_succeeded") {
+      const invoice = event.data.object as Stripe.Invoice;
 
-  const fullInvoice = await stripe.invoices.retrieve(invoice.id, {
-    expand: ["lines.data.price"],
-  });
+      const fullInvoice = await stripe.invoices.retrieve(invoice.id, {
+        expand: ["lines.data.price"],
+      });
 
-  let email: string | undefined =
-    fullInvoice.customer_email ||
-    (typeof fullInvoice.customer === "object"
-      ? (fullInvoice.customer as any)?.email
-      : undefined);
+      let email: string | undefined =
+        fullInvoice.customer_email ||
+        (typeof fullInvoice.customer === "object"
+          ? (fullInvoice.customer as any)?.email
+          : undefined);
 
-  if (!email && typeof fullInvoice.customer === "string") {
-    const cust = (await stripe.customers.retrieve(fullInvoice.customer)) as any;
-    email = cust?.email || undefined;
-  }
-
-  if (!email) throw new Error("No customer email on invoice");
-
-  // Compute credits from invoice lines
-  let credits = 0;
-  const lines = fullInvoice.lines?.data ?? [];
-
-  for (const line of lines as any[]) {
-    const priceId =
-      line?.price?.id ||
-      line?.pricing?.price_details?.price ||
-      line?.pricing?.price_details?.price?.id ||
-      line?.plan?.id ||
-      line?.plan;
-
-    const qty = line.quantity ?? 1;
-    const per = priceId ? (PRICE_TO_CREDITS[String(priceId)] ?? 0) : 0;
-    credits += per * qty;
-  }
-
-  console.log("[stripe] invoice credits computed:", credits, { invoiceId: fullInvoice.id });
-
-  if (credits > 0) {
-    const memberId = await getOrCreateMemberByEmail({ email });
-
-    // Grant credits (your existing behavior)
-    await grantCredits(memberId, credits, `Stripe invoice (${fullInvoice.id})`);
-
-    // ---- Booking passes for subscriptions (1 email, N links) ----
-    const emailLower = String(email).toLowerCase().trim();
-
-    // Idempotency: if passes already exist for this invoice, do nothing
-    const { data: existingPasses, error: passLookupErr } = await supabaseAdmin
-      .from("booking_passes")
-      .select("id, token")
-      .eq("stripe_invoice_id", fullInvoice.id);
-
-    if (passLookupErr) {
-      throw new Error(`booking_passes lookup failed: ${passLookupErr.message}`);
-    }
-
-    if ((existingPasses?.length ?? 0) === 0) {
-      const tokens: string[] = [];
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-      for (let i = 0; i < credits; i++) {
-        const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
-        const token = Buffer.from(tokenBytes).toString("base64url");
-
-        const { error: insErr } = await supabaseAdmin.from("booking_passes").insert({
-          token,
-          email: emailLower,
-          expires_at: expiresAt,
-          member_id: memberId,
-          stripe_invoice_id: fullInvoice.id,
-        });
-
-        if (insErr) throw new Error(`booking_pass insert failed: ${insErr.message}`);
-        tokens.push(token);
+      if (!email && typeof fullInvoice.customer === "string") {
+        const cust = (await stripe.customers.retrieve(fullInvoice.customer)) as any;
+        email = cust?.email || undefined;
       }
 
-      const linksHtml = tokens
-        .map((t, idx) => {
-          const bookingUrl =
-            `https://vffglvixaokvtdrdpvtd.functions.supabase.co/redeem-booking-pass?token=${t}`;
-          return `<li><a href="${bookingUrl}"><strong>Booking Link ${idx + 1}</strong></a></li>`;
-        })
-        .join("");
+      if (!email) throw new Error("No customer email on invoice");
 
-      const html = `
-        <p>Thank you for your membership payment.</p>
+      // Compute credits from invoice lines
+      let credits = 0;
+      const lines = fullInvoice.lines?.data ?? [];
 
-        <p><strong>Your booking links (${credits})</strong></p>
-        <ul>${linksHtml}</ul>
+      for (const line of lines as any[]) {
+        const priceId =
+          line?.price?.id ||
+          line?.pricing?.price_details?.price ||
+          line?.pricing?.price_details?.price?.id ||
+          line?.plan?.id ||
+          line?.plan;
 
-        <p><strong>Important:</strong> each link can be clicked <strong>once</strong> and expires in <strong>30 days</strong>. Please be ready to book when you click.</p>
+        const qty = line.quantity ?? 1;
+        const per = priceId ? (PRICE_TO_CREDITS[String(priceId)] ?? 0) : 0;
+        credits += per * qty;
+      }
 
-        <p><strong>Booking rules (for members + shared credits):</strong></p>
-        <ul>
-          <li>All bookings must be made under the <strong>member’s email</strong> (${emailLower}).</li>
-          <li>When booking for a guest, enter the <strong>guest’s name</strong> as the attendee.</li>
-          <li><strong>Waivers:</strong> each attendee must have a waiver on file. The waiver email is sent to the member by default. Forward it to adult guests, or sign for minors.</li>
-        </ul>
-
-        <p>If you click a link and can’t complete booking, email
-          <a href="mailto:help@happensbychance.com">help@happensbychance.com</a>.
-        </p>
-      `;
-
-      await fetch(
-        "https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-cron-key": process.env.CRON_INVOKE_KEY!,
-          },
-          body: JSON.stringify({
-            to: emailLower,
-            subject: `Your booking links — Happens By Chance (${credits})`,
-            html,
-          }),
-        }
-      );
-    } else {
-      console.log("[stripe] booking passes already exist for invoice; skipping email", {
+      console.log("[stripe] invoice credits computed:", credits, {
         invoiceId: fullInvoice.id,
-        count: existingPasses?.length ?? 0,
       });
-    }
-  }
 
-  await markProcessed(event.id, event.type);
-  return new Response("OK", { status: 200 });
+      if (credits > 0) {
+        const memberId = await getOrCreateMemberByEmail({ email });
+
+        // Grant credits
+        await grantCredits(memberId, credits, `Stripe invoice (${fullInvoice.id})`);
+
+        // ---- Booking passes for subscriptions (1 email, N links) ----
+        const emailLower = String(email).toLowerCase().trim();
+
+        // Idempotency: if passes already exist for this invoice, do nothing
+        const { data: existingPasses, error: passLookupErr } = await supabaseAdmin
+          .from("booking_passes")
+          .select("id, token")
+          .eq("stripe_invoice_id", fullInvoice.id);
+
+        if (passLookupErr) {
+          throw new Error(`booking_passes lookup failed: ${passLookupErr.message}`);
+        }
+
+        if ((existingPasses?.length ?? 0) === 0) {
+          const tokens: string[] = [];
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+          for (let i = 0; i < credits; i++) {
+            const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+            const token = Buffer.from(tokenBytes).toString("base64url");
+
+            const { error: insErr } = await supabaseAdmin.from("booking_passes").insert({
+              token,
+              email: emailLower,
+              expires_at: expiresAt,
+              member_id: memberId,
+              stripe_invoice_id: fullInvoice.id,
+            });
+
+            if (insErr) throw new Error(`booking_pass insert failed: ${insErr.message}`);
+            tokens.push(token);
+          }
+
+          const linksHtml = tokens
+            .map((t, idx) => {
+              const bookingUrl =
+                `https://vffglvixaokvtdrdpvtd.functions.supabase.co/redeem-booking-pass?token=${t}`;
+              return `<li><a href="${bookingUrl}"><strong>Booking Link ${idx + 1}</strong></a></li>`;
+            })
+            .join("");
+
+          const html = `
+            <p>Thank you for your membership payment.</p>
+
+            <p><strong>Your booking links (${credits})</strong></p>
+            <ul>${linksHtml}</ul>
+
+            <p><strong>Important:</strong> each link can be clicked <strong>once</strong> and expires in <strong>30 days</strong>. Please be ready to book when you click.</p>
+
+            <p><strong>Booking rules (for members + shared credits):</strong></p>
+            <ul>
+              <li>All bookings must be made under the <strong>member’s email</strong> (${emailLower}).</li>
+              <li>When booking for a guest, enter the <strong>guest’s name</strong> as the attendee.</li>
+              <li><strong>Waivers:</strong> each attendee must have a waiver on file. The waiver email is sent to the member by default. Forward it to adult guests, or sign for minors.</li>
+            </ul>
+
+            <p>If you click a link and can’t complete booking, email
+              <a href="mailto:help@happensbychance.com">help@happensbychance.com</a>.
+            </p>
+          `;
+
+          await fetch(
+            "https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-cron-key": process.env.CRON_INVOKE_KEY!,
+              },
+              body: JSON.stringify({
+                to: emailLower,
+                subject: `Your booking links — Happens By Chance (${credits})`,
+                html,
+              }),
+            }
+          );
+        } else {
+          console.log("[stripe] booking passes already exist for invoice; skipping email", {
+            invoiceId: fullInvoice.id,
+            count: existingPasses?.length ?? 0,
+          });
+        }
+      }
+
+      await markProcessed(event.id, event.type);
+      return new Response("OK", { status: 200 });
+    }
+
+    // Default: record + ignore
+    await markProcessed(event.id, event.type);
+    return new Response("Ignored", { status: 200 });
+  } catch (err: any) {
+    console.error("[stripe] handler error:", err?.message);
+    return new Response(`Handler Error: ${err?.message}`, { status: 500 });
+  }
 }
