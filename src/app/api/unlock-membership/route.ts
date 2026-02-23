@@ -138,7 +138,7 @@ export async function POST(req: Request) {
 
     <p>
       Looks like you haven’t attended your first session yet (or it hasn’t been redeemed in our system).
-      Your first session is $45. After attending, you’ll be able to enroll in a membership.
+      After attending, you’ll be able to enroll in a membership.
     </p>
 
     <p>
