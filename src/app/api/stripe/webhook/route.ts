@@ -326,7 +326,6 @@ export async function POST(req: Request) {
 
       // Member id based on Stripe email (for credits)
       const memberId = await getOrCreateMemberByEmail({ email, fullName, phone });
-
       // Payer tracking (who paid)
       const payerEmail = String(email).toLowerCase().trim();
       const payerName = fullName ? String(fullName).trim() : null;
