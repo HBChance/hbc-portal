@@ -122,7 +122,7 @@ const attendeeName =
   (String(body?.payload?.name ?? "").trim() ||
     `${String(body?.payload?.first_name ?? "").trim()} ${String(body?.payload?.last_name ?? "").trim()}`.trim() ||
     null);
-// ✅ Always let Calendly be the source of truth for member first/last name
+// ✅ Fill member first/last name ONLY if missing (prevents guest bookings overwriting member identity)
 try {
   const emailLower = String(parsed.inviteeEmail ?? "").toLowerCase().trim();
   const full = String(attendeeName ?? "").trim();
@@ -132,14 +132,35 @@ try {
     const first = parts.length ? parts[0] : null;
     const last = parts.length > 1 ? parts.slice(1).join(" ") : null;
 
-    await supabase
+    // Only update if member name is currently empty
+    const { data: current, error: curErr } = await supabase
       .from("members")
-      .update({
-        first_name: first,
-        last_name: last,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("email", emailLower);
+      .select("first_name,last_name")
+      .eq("email", emailLower)
+      .maybeSingle();
+
+    if (curErr) {
+      console.error("[calendly] member name lookup failed", curErr.message);
+    } else {
+      const hasName =
+        Boolean(String(current?.first_name ?? "").trim()) ||
+        Boolean(String(current?.last_name ?? "").trim());
+
+      if (!hasName) {
+        await supabase
+          .from("members")
+          .update({
+            first_name: first,
+            last_name: last,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("email", emailLower);
+
+        console.log("[calendly] member name set from calendly (was empty)", { emailLower, first, last });
+      } else {
+        console.log("[calendly] skipped member name update (already set)", { emailLower });
+      }
+    }
   }
 } catch (e: any) {
   console.error("[calendly] failed to sync member name from calendly", e?.message);
@@ -380,13 +401,37 @@ const waiverYear = new Date().getFullYear();
         existing = wByEmail ?? null;
       }
     }
+// 2B) Extra guard: if this recipient already has ANY signed waiver for this year (legacy or not),
+// do NOT send another waiver.
+let signedForYear: any = null;
+{
+  const { data: signedRow, error: signedErr } = await supabase
+    .from("waivers")
+    .select("id,status,signed_at,external_document_id,calendly_invitee_uri")
+    .eq("recipient_email", emailLower)
+    .eq("waiver_year", waiverYear)
+    .or("status.eq.signed,signed_at.not.is.null")
+    .limit(1)
+    .maybeSingle();
 
+  if (signedErr) {
+    console.error("[waiver] lookup error (signed-for-year)", signedErr.message);
+  } else {
+    signedForYear = signedRow ?? null;
+  }
+}
     // 3) Idempotency
-    if (existing?.status === "signed" || existing?.signed_at) {
-      console.log("[waiver] already signed — no send", { newInviteeUri, waiverYear });
-    } else if (existing?.status === "sent" && existing?.external_document_id) {
-      console.log("[waiver] already sent — no send", { newInviteeUri, waiverYear });
-    } else {
+if (signedForYear) {
+  console.log("[waiver] already signed for year — no send", {
+    waiverYear,
+    calendlyInviteeUri: newInviteeUri,
+    signedRowId: signedForYear.id,
+  });
+} else if (existing?.status === "signed" || existing?.signed_at) {
+  console.log("[waiver] already signed — no send", { newInviteeUri, waiverYear });
+} else if (existing?.status === "sent" && existing?.external_document_id) {
+  console.log("[waiver] already sent — no send", { newInviteeUri, waiverYear });
+} else {
       const templateId = process.env.SIGNNOW_WAIVER_TEMPLATE_ID;
       const fromEmail = process.env.SIGNNOW_FROM_EMAIL;
       const roleName = process.env.SIGNNOW_WAIVER_ROLE_NAME || "Participant";
