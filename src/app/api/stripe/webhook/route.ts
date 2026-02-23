@@ -17,17 +17,41 @@ const supabaseAdmin = createClient(supabaseUrl, serviceRole);
 
 /**
  * Map Stripe PRICE IDs -> credits.
- * Use TEST price IDs while in test mode.
+ * Keep BOTH test + live IDs so you can test anytime.
  */
 const PRICE_TO_CREDITS: Record<string, number> = {
-  // One-time $45 (TEST)
-  "price_1Sq1PW74RZAQay6edMvp2D58": 1,
+  // ----------------
+  // ONE-TIME $45 (TEST + LIVE)
+  // ----------------
+  "price_1Sq1PW74RZAQay6edMvp2D58": 1, // TEST (old)
+  "price_1SmLU074RZAQay6eOBpwDoqI": 1, // LIVE
 
-  // Monthly membership $33 (TEST)
-  "price_1SnXJM74RZAQay6ecf6zGUaZ": 1,
+  // ----------------
+  // $33 Membership (TEST + LIVE) => 1 credit
+  // ----------------
+  "price_1SnXJM74RZAQay6ecf6zGUaZ": 1, // TEST
+  "price_1SmLOG74RZAQay6eQEa7jhOF": 1, // LIVE
 
-  // Monthly membership $66 (TEST)
-  "price_1SnXOq74RZAQay6eC51mfDPa": 4,
+  // ----------------
+  // $66 Membership (TEST + LIVE) => 4 credits
+  // ----------------
+  "price_1SnXOq74RZAQay6eC51mfDPa": 4, // TEST
+  "price_1SmLQH74RZAQay6ey4DRzjZb": 4, // LIVE
+};
+const MEMBERSHIPS = {
+  oneSession: {
+    title: "Ladera Ranch Sound Healing - 1 Session Monthly Membership",
+    priceIdLive: "price_1SmLOG74RZAQay6eQEa7jhOF",
+    paymentLink: "https://buy.stripe.com/7sY14g6mT4Ra7vcebp3Ru07",
+    creditsPerMonth: 1,
+  },
+  fourSession: {
+    title: "Ladera Ranch Sound Healing - 4 Session Monthly Membership",
+    priceIdLive: "price_1SmLQH74RZAQay6ey4DRzjZb",
+    paymentLink: "https://buy.stripe.com/4gMfZabHdgzSdTAebp3Ru08",
+    creditsPerMonth: 4,
+  },
+  supportEmail: "membership@happensbychance.com",
 };
 
 async function alreadyProcessed(eventId: string) {
@@ -91,19 +115,30 @@ async function getOrCreateMemberByEmail(opts: {
   return created.id as string;
 }
 
+async function creditGrantExistsForInvoice(memberId: string, stripeInvoiceId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("credits_ledger")
+    .select("id")
+    .eq("member_id", memberId)
+    .eq("entry_type", "grant")
+    .ilike("reason", `%Stripe invoice (${stripeInvoiceId})%`)
+    .limit(1);
+
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
 async function creditGrantExistsForSession(memberId: string, stripeSessionId: string) {
   const { data, error } = await supabaseAdmin
     .from("credits_ledger")
     .select("id")
     .eq("member_id", memberId)
     .eq("entry_type", "grant")
-    .ilike("reason", `%${stripeSessionId}%`)
+    .ilike("reason", `%session=${stripeSessionId}%`)
     .limit(1);
 
   if (error) throw error;
   return (data?.length ?? 0) > 0;
 }
-
 async function grantCredits(memberId: string, qty: number, reason: string) {
   if (!qty || qty === 0) return;
 
@@ -306,15 +341,15 @@ export async function POST(req: Request) {
       await upsertPayerPurchase({ payerId, memberId, session });
 
       // Credit grant (idempotent by session id in reason)
-      const alreadyGranted = await creditGrantExistsForSession(memberId, session.id);
-      if (!alreadyGranted) {
-        await grantCredits(
-          memberId,
-          credits,
-          `stripe checkout.session.completed | session=${session.id} | event=${event.id}`
-        );
-      }
+const alreadyGranted = await creditGrantExistsForSession(memberId, session.id);
 
+if (!alreadyGranted) {
+  await grantCredits(
+    memberId,
+    credits,
+    `stripe checkout.session.completed | session=${session.id} | event=${event.id}`
+  );
+}
       // Guest profile upsert
       await supabaseAdmin.from("guest_profiles").upsert(
         {
@@ -490,7 +525,7 @@ export async function POST(req: Request) {
             })
             .join("");
 
-          const html = `
+         const html = `
   <p>Thank you for your membership payment.</p>
 
   <p><strong>Your booking links (${credits})</strong></p>
@@ -498,17 +533,25 @@ export async function POST(req: Request) {
 
   <p><strong>Important:</strong></p>
   <ul>
-    <li>Each link books one session and can be clicked <strong>once</strong>.</li>
+    <li>Each link books <strong>one</strong> session and can be clicked <strong>once</strong>.</li>
     <li>Links expire in <strong>30 days</strong>.</li>
     <li>Please be ready to complete booking when you click a link.</li>
   </ul>
 
   <p><strong>Booking Rules:</strong></p>
   <ul>
-    <li>All bookings must be made under the <strong>member’s email</strong> (${emailLower}).</li>
-    <li>If you’re booking for a guest: use your member email, and put the guest’s name in the name field.</li>
-    <li>Each attendee must have a waiver on file. The waiver email is sent to the member by default. Forward it to adult guests, or sign for minors.</li>
+    <li><strong>All bookings must be made under the member’s email</strong> (${emailLower}).</li>
+    <li><strong>If you’re booking for a guest:</strong> use your member email, and put the guest’s name in the name field.</li>
+    <li><strong>Waivers:</strong> each attendee must have a waiver on file. The waiver email is sent to the member by default. Forward it to adult guests, or sign for minors.</li>
   </ul>
+
+  <p><strong>Renewal:</strong> your membership renews on the same day each month as your original purchase date. Credits refresh on renewal day.</p>
+
+  <p><strong>Need extra credits?</strong> Additional sessions must be purchased separately as single-session credits.</p>
+
+  <p><strong>Questions / cancellations:</strong> email
+    <a href="mailto:${MEMBERSHIPS.supportEmail}">${MEMBERSHIPS.supportEmail}</a>
+  </p>
 
   <p>If you click a link and cannot complete booking, email 
     <a href="mailto:help@happensbychance.com">help@happensbychance.com</a>.
