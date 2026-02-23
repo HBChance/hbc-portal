@@ -213,7 +213,11 @@ async function upsertPayerPurchase(opts: {
   session: Stripe.Checkout.Session;
 }) {
   const { session } = opts;
-  const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
+
+  const paymentIntentId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : (session.payment_intent as any)?.id ?? null;
 
   const { error } = await supabaseAdmin
     .from("payer_purchases")
@@ -231,7 +235,6 @@ async function upsertPayerPurchase(opts: {
 
   if (error) throw new Error(`Failed upserting payer_purchases: ${error.message}`);
 }
-
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
   if (!sig) return new Response("Missing signature", { status: 400 });
@@ -440,8 +443,8 @@ if (!alreadyGranted) {
       const invoice = event.data.object as Stripe.Invoice;
 
       const fullInvoice = await stripe.invoices.retrieve(invoice.id, {
-        expand: ["lines.data.price"],
-      });
+  	expand: ["lines.data.price", "payment_intent"],
+	});
 
       let email: string | undefined =
         fullInvoice.customer_email ||
