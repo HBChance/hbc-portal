@@ -479,52 +479,55 @@ if (!alreadyGranted) {
 
       if (credits > 0) {
         const memberId = await getOrCreateMemberByEmail({ email });
-// ---- PAYER TRACKING (subscriptions) ----
-// For subscriptions we don't have a checkout session in this webhook,
-// so we record the invoice id into payer_purchases.stripe_session_id (unique).
-const subStripeCustomerId =
-  typeof fullInvoice.customer === "string"
-    ? fullInvoice.customer
-    : ((fullInvoice.customer as any)?.id ?? null);
+// ---- PAYER TRACKING (subscriptions via invoice) ----
+  // Prefer Stripe customer id; invoice.customer can be string id or expanded object.
+  const stripeCustomerId =
+    typeof fullInvoice.customer === "string"
+      ? fullInvoice.customer
+      : ((fullInvoice.customer as any)?.id ?? null);
 
-const subPayerEmail = String(email).toLowerCase().trim();
+  const payerEmail = String(email).toLowerCase().trim();
 
-// Best-effort payer name from Stripe customer
-let subPayerName: string | null = null;
-try {
-  if (subStripeCustomerId) {
-    const cust = (await stripe.customers.retrieve(subStripeCustomerId)) as any;
-    subPayerName = cust?.name ? String(cust.name).trim() : null;
+  // Best-effort payer name from customer record (invoices often don't include it)
+  let payerName: string | null = null;
+  try {
+    if (stripeCustomerId) {
+      const cust = (await stripe.customers.retrieve(stripeCustomerId)) as any;
+      payerName = cust?.name ? String(cust.name).trim() : null;
+    }
+  } catch {
+    // swallow (do not break billing flow)
   }
-} catch {
-  // swallow
-}
 
-const subPayerId = await getOrCreatePayer({
-  payerEmail: subPayerEmail,
-  payerName: subPayerName,
-  stripeCustomerId: subStripeCustomerId,
-});
+  const payerId = await getOrCreatePayer({
+    payerEmail,
+    payerName,
+    stripeCustomerId,
+  });
 
-// NOTE: payer_purchases has only stripe_session_id today.
-// We store invoice id there for subscription payments.
-const { error: subPpErr } = await supabaseAdmin
-  .from("payer_purchases")
-  .upsert(
-    {
-      payer_id: subPayerId,
-      member_id: memberId,
-      stripe_session_id: fullInvoice.id,
-      stripe_payment_intent_id: (fullInvoice as any)?.payment_intent ?? null,
-      amount_total: (fullInvoice as any)?.amount_paid ?? null,
-      currency: fullInvoice.currency ?? null,
-    },
-    { onConflict: "stripe_session_id" }
-  );
+  // NOTE: payer_purchases only has stripe_session_id right now.
+  // For subscriptions, we store invoice id in stripe_session_id to avoid schema changes.
+  const { error: ppInvoiceErr } = await supabaseAdmin
+    .from("payer_purchases")
+    .upsert(
+      {
+        payer_id: payerId,
+        member_id: memberId,
+        stripe_session_id: fullInvoice.id,
+        stripe_payment_intent_id:
+          typeof (fullInvoice as any)?.payment_intent === "string"
+            ? (fullInvoice as any).payment_intent
+            : null,
+        amount_total: (fullInvoice as any)?.amount_paid ?? null,
+        currency: fullInvoice.currency ?? null,
+      },
+      { onConflict: "stripe_session_id" }
+    );
 
-if (subPpErr) {
-  throw new Error(`Failed upserting payer_purchases (invoice): ${subPpErr.message}`);
-}
+  if (ppInvoiceErr) {
+    throw new Error(`Failed upserting payer_purchases (invoice): ${ppInvoiceErr.message}`);
+  }
+  // ---- end payer tracking (subscriptions) ----
         // Grant credits
         await grantCredits(memberId, credits, `Stripe invoice (${fullInvoice.id})`);
 
