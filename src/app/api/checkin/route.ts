@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     return json(false, { error: "Server misconfigured" }, 500);
   }
   if (!token || token !== expected) {
-    return json(true, { ignored: "token" }, 200);
+    return json(false, { error: "Unauthorized" }, 401);
   }
 
   const supabase = createSupabaseAdminClient();
