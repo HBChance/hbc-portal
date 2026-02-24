@@ -12,11 +12,35 @@ export default function CheckinClient() {
   const sp = useSearchParams();
 
   const token = sp.get("token") ?? "";
-  const sessionStart = sp.get("sessionStart") ?? "";
-const sessionLabel = useMemo(() => {
-    const ms = Date.parse(sessionStart);
-    if (!sessionStart || !Number.isFinite(ms)) return "";
-    return new Date(ms).toLocaleString("en-US", {
+
+  const [sessionStart, setSessionStart] = useState<string>("");
+  const [sessionLabel, setSessionLabel] = useState<string>("");
+
+  async function refreshSession() {
+    if (!token) return;
+
+    const res = await fetch(`/api/checkin/session?token=${encodeURIComponent(token)}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    const j = await res.json().catch(() => null);
+    if (!res.ok || !j?.ok) {
+      setSessionStart("");
+      setSessionLabel("");
+      return;
+    }
+
+    if (!j.hasSession || !j.sessionStart) {
+      setSessionStart("");
+      setSessionLabel(j?.message ?? "");
+      return;
+    }
+
+    setSessionStart(String(j.sessionStart));
+
+    // Client-side pretty label in LA time
+    const la = new Date(String(j.sessionStart)).toLocaleString("en-US", {
       timeZone: "America/Los_Angeles",
       weekday: "short",
       month: "short",
@@ -25,7 +49,15 @@ const sessionLabel = useMemo(() => {
       hour: "numeric",
       minute: "2-digit",
     });
-  }, [sessionStart]);
+    setSessionLabel(`${la} (America/Los_Angeles)`);
+  }
+
+  // initial load
+  useMemo(() => {
+    // fire-and-forget on first render
+    refreshSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -80,6 +112,20 @@ const sessionLabel = useMemo(() => {
   return (
     <main style={{ maxWidth: 520, margin: "40px auto", padding: "0 16px" }}>
       <h1>Check In</h1>
+{token ? (
+        <div style={{ marginTop: 10, fontSize: 13, color: "#64748b" }}>
+          <div>
+            <b>Session:</b> {sessionLabel || "Loading session…"}
+          </div>
+          <button
+            type="button"
+            onClick={refreshSession}
+            style={{ marginTop: 8, padding: "6px 10px" }}
+          >
+            Refresh session
+          </button>
+        </div>
+      ) : null}
 {sessionLabel ? (
         <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>
           Session: <b>{sessionLabel}</b> (America/Los_Angeles)
