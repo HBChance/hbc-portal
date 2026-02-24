@@ -65,8 +65,29 @@ export async function POST(req: Request) {
     console.error("[checkin] CHECKIN_TOKEN missing in env");
     return json(false, { error: "Server misconfigured" }, 500);
   }
-  if (!token || token !== expected) {
-    return json(false, { error: "Unauthorized" }, 401);
+  if (!token) {
+    // Don’t say “Unauthorized” (per your preference).
+    return json(
+      false,
+      {
+        error: "MISSING_TOKEN",
+        message:
+          "Missing session QR token. Please scan the session QR code again (or ask the coordinator for help).",
+      },
+      400
+    );
+  }
+
+  if (token !== expected) {
+    return json(
+      false,
+      {
+        error: "INVALID_TOKEN",
+        message:
+          "Invalid session QR token. Please scan the session QR code again (or ask the coordinator for help).",
+      },
+      400
+    );
   }
 
   const supabase = createSupabaseAdminClient();
