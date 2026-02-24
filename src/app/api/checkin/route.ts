@@ -34,7 +34,17 @@ const LINKS = {
 function normEmail(v: string) {
   return v.trim().toLowerCase();
 }
-
+function fmtLa(iso: string) {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 function json(ok: boolean, payload: any, status = 200) {
   return NextResponse.json({ ok, ...payload }, { status });
 }
@@ -161,23 +171,37 @@ export async function POST(req: Request) {
       approved: false,
       status: "check-in delayed — no RSVP found",
       message:
-        `No RSVP shows for ${email} for this session. A single-session purchase link has been emailed. If you think this is an error, please speak with the session coordinator.`,
+  `No RSVP shows for ${email} for ${fmtLa(sessionStartIso)}. ` +
+  `A single-session purchase link has been emailed. ` +
+  `If you think this is an error, please speak with the session coordinator.`,
     });
   }
 
   const eventStartIso = rsvp.event_start_at ? new Date(rsvp.event_start_at).toISOString() : sessionStartIso;
   const eventStartMs = Date.parse(eventStartIso);
 
-  // Enforce check-in window: allowed starting 1 hour before event start
-  const allowedAtMs = eventStartMs - 60 * 60 * 1000;
-  if (nowMs < allowedAtMs) {
-    return json(true, {
-      approved: false,
-      status: "too early",
-      message: "Check-in opens 1 hour before the session start time.",
-      opensAt: new Date(allowedAtMs).toISOString(),
-    });
-  }
+  // Enforce check-in window:
+// allowed from 60 minutes BEFORE start until 90 minutes AFTER start
+const opensAtMs = eventStartMs - 60 * 60 * 1000;
+const closesAtMs = eventStartMs + 90 * 60 * 1000;
+
+if (nowMs < opensAtMs) {
+  return json(true, {
+    approved: false,
+    status: "too early",
+    message: "Check-in opens 60 minutes before the session start time.",
+    opensAt: new Date(opensAtMs).toISOString(),
+  });
+}
+
+if (nowMs > closesAtMs) {
+  return json(true, {
+    approved: false,
+    status: "check-in closed",
+    message: "Check-in is closed for this session (90 minutes after start). Please speak with the session coordinator.",
+    closesAt: new Date(closesAtMs).toISOString(),
+  });
+}
 
   // Waiver verification for current year
   const waiverYear = new Date().getFullYear();
@@ -287,7 +311,7 @@ export async function POST(req: Request) {
   return json(true, {
     approved: true,
     status: "checked in",
-    message: "Checked in successfully. Welcome.",
+    message: "Checked in successfully. Welcome. Please find your place and enjoy the stand-in sound bowls at your leisure",
     member_id: rsvp.member_id,
     rsvp_id: rsvp.id,
   });
