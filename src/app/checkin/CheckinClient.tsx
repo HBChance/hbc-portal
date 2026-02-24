@@ -1,70 +1,81 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type ApiResp =
   | { ok: true; approved: true; status?: string; message?: string }
-  | { ok: true; approved: false; status?: string; message?: string; opensAt?: string }
+  | { ok: true; approved: false; status?: string; message?: string; opensAt?: string; closesAt?: string }
+  | { ok: false; error: string; message?: string };
+
+type NextSessionResp =
+  | { ok: true; sessionStart: string }
   | { ok: false; error: string };
+
+function fmtLa(iso: string) {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 export default function CheckinClient() {
   const sp = useSearchParams();
-
   const token = sp.get("token") ?? "";
 
-  const [sessionStart, setSessionStart] = useState<string>("");
+  // Permanent QR will usually have token only (no sessionStart).
+  const [sessionStart, setSessionStart] = useState<string>(sp.get("sessionStart") ?? "");
   const [sessionLabel, setSessionLabel] = useState<string>("");
-
-  async function refreshSession() {
-    if (!token) return;
-
-    const res = await fetch(`/api/checkin/session?token=${encodeURIComponent(token)}`, {
-      method: "GET",
-      cache: "no-store",
-    });
-
-    const j = await res.json().catch(() => null);
-    if (!res.ok || !j?.ok) {
-      setSessionStart("");
-      setSessionLabel("");
-      return;
-    }
-
-    if (!j.hasSession || !j.sessionStart) {
-      setSessionStart("");
-      setSessionLabel(j?.message ?? "");
-      return;
-    }
-
-    setSessionStart(String(j.sessionStart));
-
-    // Client-side pretty label in LA time
-    const la = new Date(String(j.sessionStart)).toLocaleString("en-US", {
-      timeZone: "America/Los_Angeles",
-      weekday: "short",
-      month: "short",
-      day: "2-digit",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    setSessionLabel(`${la} (America/Los_Angeles)`);
-  }
-
-  // initial load
-  useMemo(() => {
-    // fire-and-forget on first render
-    refreshSession();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
 
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [msg, setMsg] = useState<string>("");
 
+  const missingToken = !token;
+
+  async function loadNextSession() {
+    try {
+      const res = await fetch("/api/checkin/next-session", { cache: "no-store" });
+      const json = (await res.json().catch(() => null)) as NextSessionResp | null;
+
+      if (!res.ok || !json || json.ok !== true || !json.sessionStart) {
+        setSessionStart("");
+        setSessionLabel("Unable to load session. Please ask the coordinator.");
+        return;
+      }
+
+      // Single source of truth:
+      setSessionStart(json.sessionStart);
+    } catch {
+      setSessionStart("");
+      setSessionLabel("Unable to load session. Please ask the coordinator.");
+    }
+  }
+
+  // If sessionStart isn't provided by URL (permanent QR), load next session automatically.
+  useEffect(() => {
+    if (!sessionStart) loadNextSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Whenever sessionStart changes, compute label exactly once
+  useEffect(() => {
+    if (!sessionStart) return;
+    setSessionLabel(`${fmtLa(sessionStart)} (America/Los_Angeles)`);
+  }, [sessionStart]);
+
   const canSubmit = useMemo(() => {
-    return email.trim().length > 3 && email.includes("@") && token.length > 10 && sessionStart.length > 10;
+    return (
+      email.trim().length > 3 &&
+      email.includes("@") &&
+      token.length > 10 &&
+      sessionStart.length > 10
+    );
   }, [email, token, sessionStart]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -81,28 +92,17 @@ export default function CheckinClient() {
 
       const json = (await res.json().catch(() => null)) as ApiResp | null;
 
-      if (!res.ok || !json) {
-        throw new Error("Request failed");
-      }
+      if (!res.ok || !json) throw new Error("Request failed");
 
       if ("ok" in json && json.ok === false) {
-        throw new Error(json.error || "Request failed");
+        throw new Error(json.message || json.error || "Request failed");
       }
 
-      // ok:true response
       const statusLine = (json as any)?.status ? String((json as any).status) : "";
       const messageLine = (json as any)?.message ? String((json as any).message) : "";
 
-      // Only treat "approved:true" as a true success
-      if ((json as any).approved === true) {
-        setState("done");
-        setMsg(messageLine || "Checked in successfully.");
-        return;
-      }
-
-      // approved:false (delayed / too early / no RSVP / waiver not signed)
       setState("done");
-      setMsg(messageLine || statusLine || "Check-in delayed.");
+      setMsg(messageLine || statusLine || "Check-in processed.");
     } catch (err: any) {
       setState("error");
       setMsg(err?.message || "Something went wrong.");
@@ -112,33 +112,37 @@ export default function CheckinClient() {
   return (
     <main style={{ maxWidth: 520, margin: "40px auto", padding: "0 16px" }}>
       <h1>Check In</h1>
-{token ? (
-        <div style={{ marginTop: 10, fontSize: 13, color: "#64748b" }}>
-          <div>
-            <b>Session:</b> {sessionLabel || "Loading session…"}
+
+      {missingToken ? (
+        <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e7eb", borderRadius: 12 }}>
+          <b>Missing QR token.</b>
+          <div style={{ marginTop: 6, color: "#64748b", fontSize: 13 }}>
+            Please scan the session QR code again (or ask the coordinator for help).
           </div>
-          <button
-            type="button"
-            onClick={refreshSession}
-            style={{ marginTop: 8, padding: "6px 10px" }}
-          >
-            Refresh session
-          </button>
-        </div>
-      ) : null}
-{sessionLabel ? (
-        <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>
-          Session: <b>{sessionLabel}</b> (America/Los_Angeles)
         </div>
       ) : null}
 
-      {!token || !sessionStart ? (
+      {token ? (
         <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e7eb", borderRadius: 12 }}>
-          <b>Missing QR parameters.</b>
-          <div style={{ marginTop: 6, color: "#64748b", fontSize: 13 }}>
-            This page must be opened from the session QR code so it includes <code>token</code> and{" "}
-            <code>sessionStart</code>.
+          <div style={{ fontSize: 13, color: "#334155" }}>
+            <b>Session:</b>{" "}
+            {sessionLabel || "Loading…"}
           </div>
+
+          <button
+            type="button"
+            onClick={loadNextSession}
+            style={{
+              marginTop: 10,
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #e5e7eb",
+              background: "#fff",
+              cursor: "pointer",
+            }}
+          >
+            Refresh session
+          </button>
         </div>
       ) : null}
 
@@ -155,11 +159,7 @@ export default function CheckinClient() {
           />
         </label>
 
-        <button
-          type="submit"
-          disabled={state === "loading" || !canSubmit}
-          style={{ padding: "10px 14px" }}
-        >
+        <button type="submit" disabled={state === "loading" || !canSubmit} style={{ padding: "10px 14px" }}>
           {state === "loading" ? "Checking…" : "Check In"}
         </button>
       </form>
