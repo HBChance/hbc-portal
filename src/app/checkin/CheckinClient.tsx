@@ -13,6 +13,19 @@ export default function CheckinClient() {
 
   const token = sp.get("token") ?? "";
   const sessionStart = sp.get("sessionStart") ?? "";
+const sessionLabel = useMemo(() => {
+    const ms = Date.parse(sessionStart);
+    if (!sessionStart || !Number.isFinite(ms)) return "";
+    return new Date(ms).toLocaleString("en-US", {
+      timeZone: "America/Los_Angeles",
+      weekday: "short",
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }, [sessionStart]);
 
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -67,6 +80,11 @@ export default function CheckinClient() {
   return (
     <main style={{ maxWidth: 520, margin: "40px auto", padding: "0 16px" }}>
       <h1>Check In</h1>
+{sessionLabel ? (
+        <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>
+          Session: <b>{sessionLabel}</b> (America/Los_Angeles)
+        </div>
+      ) : null}
 
       {!token || !sessionStart ? (
         <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e7eb", borderRadius: 12 }}>

@@ -50,23 +50,33 @@ function json(ok: boolean, payload: any, status = 200) {
 }
 
 async function sendEmail(to: string, subject: string, html: string) {
-  // Uses your existing Supabase Edge Function mailer (Resend)
   const cronKey = process.env.CRON_INVOKE_KEY;
   if (!cronKey) {
-    console.warn("[checkin] CRON_INVOKE_KEY missing; cannot send email");
-    return;
+    console.error("[checkin] CRON_INVOKE_KEY missing; email not sent", { to, subject });
+    return { ok: false, error: "CRON_INVOKE_KEY missing" };
   }
 
-  await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-cron-key": cronKey,
-    },
-    body: JSON.stringify({ to, subject, html }),
-  });
-}
+  const res = await fetch(
+    "https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-cron-key": cronKey,
+      },
+      body: JSON.stringify({ to, subject, html }),
+    }
+  );
 
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    console.error("[checkin] sendEmail failed", { status: res.status, text });
+    return { ok: false, error: `mailer_failed_${res.status}` };
+  }
+
+  console.log("[checkin] sendEmail ok", { to, subject });
+  return { ok: true };
+}
 export async function POST(req: Request) {
   const token = new URL(req.url).searchParams.get("token");
   const expected = process.env.CHECKIN_TOKEN;
@@ -142,40 +152,51 @@ export async function POST(req: Request) {
   }
 
   // If no RSVP, deny and email first-session link
-  if (!rsvp?.id) {
-    await sendEmail(
-      email,
-      "No RSVP found — Happens By Chance",
-      `
-        <p><strong>No RSVP found</strong> for <code>${email}</code> for this session.</p>
-        <p>If you’d like to attend, please purchase a single session here:</p>
-        <p><a href="${LINKS.firstSessionLink}"><strong>$45 First Session Link</strong></a></p>
-        <p>If you believe this is an error, please speak with the session coordinator or email
-          <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
-        </p>
-      `
-    );
+if (!rsvp?.id) {
+  const sessionLa = fmtLa(sessionStartIso);
 
-    // Record denied check-in
-    await supabase.from("checkins").insert({
-      booking_id: null,
-      member_id: null,
-      session_start: sessionStartIso,
-      waiver_year: new Date().getFullYear(),
-      waiver_verified: false,
-      entry_approved: false,
-      denied_reason: "NO_RSVP",
-    });
+  const emailRes = await sendEmail(
+    email,
+    "No RSVP found — Happens By Chance",
+    `
+      <p><strong>No RSVP found</strong> for <code>${email}</code> for:</p>
+      <p><strong>${sessionLa} (America/Los_Angeles)</strong></p>
 
-    return json(true, {
-      approved: false,
-      status: "check-in delayed — no RSVP found",
-      message:
-  `No RSVP shows for ${email} for ${fmtLa(sessionStartIso)}. ` +
-  `A single-session purchase link has been emailed. ` +
-  `If you think this is an error, please speak with the session coordinator.`,
-    });
-  }
+      <p>If you’d like to attend this session, please purchase a single session here:</p>
+
+      <p>
+        <a href="${LINKS.firstSessionLink}">
+          <strong>$45 First Session Link</strong>
+        </a>
+      </p>
+
+      <p>If you believe this is an error, please speak with the session coordinator or email
+        <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
+      </p>
+    `
+  );
+
+  // Record denied check-in
+  await supabase.from("checkins").insert({
+    booking_id: null,
+    member_id: null,
+    session_start: sessionStartIso,
+    waiver_year: new Date().getFullYear(),
+    waiver_verified: false,
+    entry_approved: false,
+    denied_reason: "NO_RSVP",
+  });
+
+  return json(true, {
+    approved: false,
+    status: "check-in delayed — no RSVP found",
+    message:
+      `No RSVP shows for ${email} for ${sessionLa}. ` +
+      `A single-session purchase link has been emailed. ` +
+      `If you think this is an error, please speak with the session coordinator.`,
+    email_sent: emailRes?.ok ?? false,
+  });
+}
 
   const eventStartIso = rsvp.event_start_at ? new Date(rsvp.event_start_at).toISOString() : sessionStartIso;
   const eventStartMs = Date.parse(eventStartIso);
