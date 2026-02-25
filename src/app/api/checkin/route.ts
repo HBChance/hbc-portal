@@ -246,77 +246,117 @@ if (nowMs > closesAtMs) {
   const hasSignedWaiver = !!signedForYear?.id;
 
   if (!hasSignedWaiver) {
-    // If there is a waiver row with a document id (sent previously), re-send invite.
-    const { data: anyWaiverRow, error: anyWaiverErr } = await supabase
-      .from("waivers")
-      .select("id,status,external_document_id,external_provider,recipient_email,waiver_year")
-      .eq("recipient_email", email)
-      .eq("waiver_year", waiverYear)
-      .order("sent_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+  // If there is a waiver row with a document id (sent previously), re-send invite.
+  const { data: anyWaiverRow, error: anyWaiverErr } = await supabase
+    .from("waivers")
+    .select("id,status,external_document_id,external_provider,recipient_email,waiver_year,sent_at")
+    .eq("recipient_email", email)
+    .eq("waiver_year", waiverYear)
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-    if (anyWaiverErr) {
-      console.error("[checkin] waiver row lookup error", anyWaiverErr.message);
-      // still proceed with delayed check-in email below
-    }
-
-    const docId = anyWaiverRow?.external_document_id ?? null;
-
-    try {
-      const fromEmail = process.env.SIGNNOW_FROM_EMAIL;
-      const roleName = process.env.SIGNNOW_WAIVER_ROLE_NAME || "Participant";
-
-      if (docId && fromEmail) {
-        // Re-send the existing invite (this delivers a fresh email with the signing link)
-        await signNow.signNowSendDocumentInvite({
-          documentId: docId,
-          fromEmail,
-          toEmail: email,
-          subject: `Happens By Chance — Waiver Required (${waiverYear})`,
-          message:
-            `Hello,\n\n` +
-            `Your waiver is required to complete check-in for today's session.\n` +
-            `Please sign the waiver using the link in this email.\n\n` +
-            `If you believe you have already signed, please speak with the session coordinator.\n\n` +
-            `— Happens By Chance`,
-          roleName,
-          expirationDays: 30,
-        });
-      } else {
-        // If no existing doc, we still email instructions (Calendly flow will generate one on RSVP)
-        await sendEmail(
-          email,
-          `Waiver required to check in (${waiverYear})`,
-          `
-            <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
-            <p>Please check your email for a waiver request. If you believe you have already signed, please speak with the session coordinator.</p>
-            <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
-          `
-        );
-      }
-    } catch (e: any) {
-      console.error("[checkin] waiver resend/send failed", e?.message);
-    }
-
-    // Record delayed check-in
-    await supabase.from("checkins").insert({
-      booking_id: null,
-      member_id: rsvp.member_id,
-      session_start: eventStartIso,
-      waiver_year: waiverYear,
-      waiver_verified: false,
-      entry_approved: false,
-      denied_reason: "WAIVER_NOT_SIGNED",
-    });
-
-    return json(true, {
-      approved: false,
-      status: "check-in delayed — waiver not signed",
-      message:
-        "Check-in delayed — waiver is not confirmed signed. We emailed you the waiver link. If you believe you have already signed, please speak with the session coordinator.",
-    });
+  if (anyWaiverErr) {
+    console.error("[checkin] waiver row lookup error", anyWaiverErr.message);
   }
+
+  const docId = anyWaiverRow?.external_document_id ?? null;
+
+  let signnowInviteOk = false;
+
+  try {
+  if (docId) {
+    // Fast path: create a signing link and send via our mailer (avoids SignNow email delays)
+    const linkRes = await signNow.signNowCreateSigningLink({ documentId: docId });
+
+    const signingUrl =
+      linkRes?.url ||
+      linkRes?.link ||
+      linkRes?.data?.url ||
+      linkRes?.data?.link ||
+      null;
+
+    if (!signingUrl) {
+      console.error("[checkin] signNowCreateSigningLink missing url", { linkRes });
+      await sendEmail(
+        email,
+        `Waiver required to check in (${waiverYear})`,
+        `
+          <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
+          <p>We were unable to generate a signing link automatically. Please speak with the session coordinator.</p>
+          <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
+        `
+      );
+    } else {
+      await sendEmail(
+        email,
+        `Waiver required to check in (${waiverYear})`,
+        `
+          <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
+          <p>Please sign your waiver using this link:</p>
+          <p><a href="${signingUrl}"><strong>Sign Waiver Now</strong></a></p>
+          <p>If you believe you have already signed, please speak with the session coordinator.</p>
+          <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
+        `
+      );
+    }
+  } else {
+    // No existing doc on file yet — still email instructions (Calendly flow creates the doc on RSVP)
+    await sendEmail(
+      email,
+      `Waiver required to check in (${waiverYear})`,
+      `
+        <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
+        <p>Please check your email for a waiver request. If you believe you have already signed, please speak with the session coordinator.</p>
+        <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
+      `
+    );
+  }
+} catch (e: any) {
+  console.error("[checkin] waiver link/send failed", e?.message);
+}
+
+  // Always send *our* email too (instant), telling them what to look for.
+  const emailRes = await sendEmail(
+    email,
+    `Waiver required to check in (${waiverYear}) — Happens By Chance`,
+    `
+      <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
+      <p>
+        We have ${signnowInviteOk ? "re-sent" : "attempted to send"} your waiver request via SignNow.
+        Please look for an email with the subject:
+        <strong>“Happens By Chance — Waiver Required (${waiverYear})”</strong>.
+      </p>
+      <p>
+        If you believe you have already signed, please speak with the session coordinator.
+      </p>
+      <p>
+        If you don’t see the SignNow email, check spam/junk. For help, email
+        <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
+      </p>
+    `
+  );
+
+  // Record delayed check-in
+  await supabase.from("checkins").insert({
+    booking_id: null,
+    member_id: rsvp.member_id,
+    session_start: eventStartIso,
+    waiver_year: waiverYear,
+    waiver_verified: false,
+    entry_approved: false,
+    denied_reason: "WAIVER_NOT_SIGNED",
+  });
+
+  return json(true, {
+    approved: false,
+    status: "check-in delayed — waiver not signed",
+    message:
+      "Check-in delayed — waiver is not confirmed signed. We emailed you instructions. If you believe you have already signed, please speak with the session coordinator.",
+    waiver_email_sent: emailRes?.ok ?? false,
+    signnow_invite_sent: signnowInviteOk,
+  });
+}
 
   // Approved check-in
   await supabase.from("checkins").insert({
