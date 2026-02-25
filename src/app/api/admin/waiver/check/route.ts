@@ -131,17 +131,38 @@ if (targetEmail) q = q.eq("recipient_email", targetEmail);
 const { data: rows, error: wErr } = await q;
     if (wErr) return NextResponse.json({ error: wErr.message }, { status: 400 });
 
-    const waivers = (rows ?? []).filter((w: any) => String(w.status ?? "").toLowerCase() !== "signed");
+   // Candidates = unsigned waivers with a SignNow doc id
+const waivers = (rows ?? []).filter(
+  (w: any) => String(w.status ?? "").toLowerCase() !== "signed"
+);
 
-// Only check the most recent waiver per recipient_email (prevents checking stale docs)
-// rows are already ordered by sent_at desc above, so the first one we see per email is the newest
+// Always deterministically pick the MOST RECENT waiver per recipient_email.
+// (Do not rely on API row ordering; sort here.)
+const sorted = [...waivers].sort((a: any, b: any) => {
+  const ams = Date.parse(String(a.sent_at ?? a.created_at ?? ""));
+  const bms = Date.parse(String(b.sent_at ?? b.created_at ?? ""));
+  return (Number.isFinite(bms) ? bms : 0) - (Number.isFinite(ams) ? ams : 0);
+});
+
 const byEmail = new Map<string, any>();
-for (const w of waivers) {
+for (const w of sorted) {
   const em = String(w.recipient_email ?? "").toLowerCase().trim();
   if (!em) continue;
-  if (!byEmail.has(em)) byEmail.set(em, w);
+  if (!byEmail.has(em)) byEmail.set(em, w); // first seen = newest due to sort
 }
+
 const candidates = Array.from(byEmail.values());
+
+// Helpful: log which docIds we’re checking (shows in Vercel logs)
+console.log(
+  "[waiver-check] candidates",
+  candidates.map((w: any) => ({
+    waiver_id: w.id,
+    recipient_email: String(w.recipient_email ?? "").toLowerCase(),
+    sent_at: w.sent_at ?? null,
+    docId: w.external_document_id ?? null,
+  }))
+);
     let checked = 0;
     let marked_signed = 0;
     const errors: Array<{ waiver_id: string; error: string }> = [];
