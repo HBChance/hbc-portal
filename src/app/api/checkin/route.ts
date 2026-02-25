@@ -14,14 +14,12 @@ import * as signNow from "@/lib/signnow";
  *
  * Behavior:
  * - Finds RSVP for invitee_email + sessionStart window (±6 hours), status='booked'
- * - Allows check-in starting 1 hour before event_start_at (admin button can bypass later)
- * - Verifies waiver signed for current year; if not signed:
- *     - re-sends existing SignNow invite if a waiver doc exists
- *     - or sends a fresh waiver invite if none exists
- *     - records checkins row with entry_approved=false, waiver_verified=false, denied_reason
+ * - Allows check-in starting 60 minutes before event_start_at until 90 minutes after start
+ * - Verifies waiver signed for current year
+ *   - If DB not marked signed yet, performs LIVE SignNow check for latest doc and marks signed if completed
+ *   - If still not signed, emails instant signing link (via SignNow link + your mailer), with cooldown
  * - If no RSVP: sends $45 purchase link email + records denied checkin row
  * - If approved: records checkins row entry_approved=true, waiver_verified=true
- * - Upsell (membership unlock email) is NOT done here yet; we’ll add after this endpoint is stable.
  */
 
 const LINKS = {
@@ -34,6 +32,7 @@ const LINKS = {
 function normEmail(v: string) {
   return v.trim().toLowerCase();
 }
+
 function fmtLa(iso: string) {
   return new Date(iso).toLocaleString("en-US", {
     timeZone: "America/Los_Angeles",
@@ -45,8 +44,61 @@ function fmtLa(iso: string) {
     minute: "2-digit",
   });
 }
+
 function json(ok: boolean, payload: any, status = 200) {
   return NextResponse.json({ ok, ...payload }, { status });
+}
+
+/**
+ * SAME completion heuristic as /api/admin/waiver/check
+ * (Copied here so check-in can live-verify SignNow completion immediately.)
+ */
+function looksCompleted(doc: any): boolean {
+  const status = String(
+    doc?.status ??
+      doc?.document_status ??
+      doc?.state ??
+      doc?.data?.status ??
+      doc?.data?.document_status ??
+      doc?.data?.state ??
+      ""
+  ).toLowerCase();
+
+  if (
+    status.includes("completed") ||
+    status.includes("complete") ||
+    status.includes("signed") ||
+    status.includes("fulfilled") ||
+    status.includes("done")
+  ) {
+    return true;
+  }
+
+  if (doc?.is_completed === true || doc?.completed === true) return true;
+  if (doc?.data?.is_completed === true || doc?.data?.completed === true) return true;
+
+  const allSignedLike = (arr: any) => {
+    if (!Array.isArray(arr) || arr.length === 0) return false;
+    return arr.every((x: any) => {
+      const s = String(x?.status ?? x?.signing_status ?? x?.state ?? "").toLowerCase();
+      return (
+        x?.signed === true ||
+        s.includes("signed") ||
+        s.includes("completed") ||
+        s.includes("complete") ||
+        s.includes("fulfilled")
+      );
+    });
+  };
+
+  const signers = doc?.signers ?? doc?.data?.signers ?? null;
+  const recipients = doc?.recipients ?? doc?.data?.recipients ?? null;
+  if (allSignedLike(signers) || allSignedLike(recipients)) return true;
+
+  const invites = doc?.invites ?? doc?.data?.invites ?? null;
+  if (allSignedLike(invites)) return true;
+
+  return false;
 }
 
 async function sendEmail(to: string, subject: string, html: string) {
@@ -56,17 +108,14 @@ async function sendEmail(to: string, subject: string, html: string) {
     return { ok: false, error: "CRON_INVOKE_KEY missing" };
   }
 
-  const res = await fetch(
-    "https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-cron-key": cronKey,
-      },
-      body: JSON.stringify({ to, subject, html }),
-    }
-  );
+  const res = await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-cron-key": cronKey,
+    },
+    body: JSON.stringify({ to, subject, html }),
+  });
 
   const text = await res.text().catch(() => "");
   if (!res.ok) {
@@ -77,6 +126,7 @@ async function sendEmail(to: string, subject: string, html: string) {
   console.log("[checkin] sendEmail ok", { to, subject });
   return { ok: true };
 }
+
 export async function POST(req: Request) {
   const token = new URL(req.url).searchParams.get("token");
   const expected = process.env.CHECKIN_TOKEN;
@@ -85,14 +135,13 @@ export async function POST(req: Request) {
     console.error("[checkin] CHECKIN_TOKEN missing in env");
     return json(false, { error: "Server misconfigured" }, 500);
   }
+
   if (!token) {
-    // Don’t say “Unauthorized” (per your preference).
     return json(
       false,
       {
         error: "MISSING_TOKEN",
-        message:
-          "Missing session QR token. Please scan the session QR code again (or ask the coordinator for help).",
+        message: "Missing session QR token. Please scan the session QR code again (or ask the coordinator for help).",
       },
       400
     );
@@ -103,8 +152,7 @@ export async function POST(req: Request) {
       false,
       {
         error: "INVALID_TOKEN",
-        message:
-          "Invalid session QR token. Please scan the session QR code again (or ask the coordinator for help).",
+        message: "Invalid session QR token. Please scan the session QR code again (or ask the coordinator for help).",
       },
       400
     );
@@ -119,19 +167,15 @@ export async function POST(req: Request) {
   const sessionStartRaw = String(body?.sessionStart ?? "");
   const sessionStartMs = Date.parse(sessionStartRaw);
 
-  if (!email || !email.includes("@")) {
-    return json(false, { error: "Valid email is required." }, 400);
-  }
-  if (!sessionStartRaw || !Number.isFinite(sessionStartMs)) {
-    return json(false, { error: "Valid sessionStart (ISO) is required." }, 400);
-  }
+  if (!email || !email.includes("@")) return json(false, { error: "Valid email is required." }, 400);
+  if (!sessionStartRaw || !Number.isFinite(sessionStartMs)) return json(false, { error: "Valid sessionStart (ISO) is required." }, 400);
 
   const sessionStartIso = new Date(sessionStartMs).toISOString();
   const nowMs = Date.now();
 
   console.log("[checkin] request", { email, sessionStartIso });
 
-  // Find the RSVP closest to this sessionStart within a tolerance window (±6 hours)
+  // RSVP tolerance window (±6 hours)
   const startWindowIso = new Date(sessionStartMs - 6 * 60 * 60 * 1000).toISOString();
   const endWindowIso = new Date(sessionStartMs + 6 * 60 * 60 * 1000).toISOString();
 
@@ -151,83 +195,72 @@ export async function POST(req: Request) {
     return json(false, { error: rsvpErr.message }, 500);
   }
 
-  // If no RSVP, deny and email first-session link
-if (!rsvp?.id) {
-  const sessionLa = fmtLa(sessionStartIso);
+  // No RSVP
+  if (!rsvp?.id) {
+    const sessionLa = fmtLa(sessionStartIso);
 
-  const emailRes = await sendEmail(
-    email,
-    "No RSVP found — Happens By Chance",
-    `
-      <p><strong>No RSVP found</strong> for <code>${email}</code> for:</p>
-      <p><strong>${sessionLa} (America/Los_Angeles)</strong></p>
+    const emailRes = await sendEmail(
+      email,
+      "No RSVP found — Happens By Chance",
+      `
+        <p><strong>No RSVP found</strong> for <code>${email}</code> for:</p>
+        <p><strong>${sessionLa} (America/Los_Angeles)</strong></p>
+        <p>If you’d like to attend this session, please purchase a single session here:</p>
+        <p><a href="${LINKS.firstSessionLink}"><strong>$45 First Session Link</strong></a></p>
+        <p>If you believe this is an error, please speak with the session coordinator or email
+          <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
+        </p>
+      `
+    );
 
-      <p>If you’d like to attend this session, please purchase a single session here:</p>
+    await supabase.from("checkins").insert({
+      booking_id: null,
+      member_id: null,
+      session_start: sessionStartIso,
+      waiver_year: new Date().getFullYear(),
+      waiver_verified: false,
+      entry_approved: false,
+      denied_reason: "NO_RSVP",
+    });
 
-      <p>
-        <a href="${LINKS.firstSessionLink}">
-          <strong>$45 First Session Link</strong>
-        </a>
-      </p>
-
-      <p>If you believe this is an error, please speak with the session coordinator or email
-        <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
-      </p>
-    `
-  );
-
-  // Record denied check-in
-  await supabase.from("checkins").insert({
-    booking_id: null,
-    member_id: null,
-    session_start: sessionStartIso,
-    waiver_year: new Date().getFullYear(),
-    waiver_verified: false,
-    entry_approved: false,
-    denied_reason: "NO_RSVP",
-  });
-
-  return json(true, {
-    approved: false,
-    status: "check-in delayed — no RSVP found",
-    message:
-      `No RSVP shows for ${email} for ${sessionLa}. ` +
-      `A single-session purchase link has been emailed. ` +
-      `If you think this is an error, please speak with the session coordinator.`,
-    email_sent: emailRes?.ok ?? false,
-  });
-}
+    return json(true, {
+      approved: false,
+      status: "check-in delayed — no RSVP found",
+      message:
+        `No RSVP shows for ${email} for ${sessionLa}. ` +
+        `A single-session purchase link has been emailed. ` +
+        `If you think this is an error, please speak with the session coordinator.`,
+      email_sent: emailRes?.ok ?? false,
+    });
+  }
 
   const eventStartIso = rsvp.event_start_at ? new Date(rsvp.event_start_at).toISOString() : sessionStartIso;
   const eventStartMs = Date.parse(eventStartIso);
 
-  // Enforce check-in window:
-// allowed from 60 minutes BEFORE start until 90 minutes AFTER start
-const opensAtMs = eventStartMs - 60 * 60 * 1000;
-const closesAtMs = eventStartMs + 90 * 60 * 1000;
+  // allowed from 60 min before until 90 min after
+  const opensAtMs = eventStartMs - 60 * 60 * 1000;
+  const closesAtMs = eventStartMs + 90 * 60 * 1000;
 
-if (nowMs < opensAtMs) {
-  return json(true, {
-    approved: false,
-    status: "too early",
-    message: "Check-in opens 60 minutes before the session start time.",
-    opensAt: new Date(opensAtMs).toISOString(),
-  });
-}
+  if (nowMs < opensAtMs) {
+    return json(true, {
+      approved: false,
+      status: "too early",
+      message: "Check-in opens 60 minutes before the session start time.",
+      opensAt: new Date(opensAtMs).toISOString(),
+    });
+  }
 
-if (nowMs > closesAtMs) {
-  return json(true, {
-    approved: false,
-    status: "check-in closed",
-    message: "Check-in is closed for this session (90 minutes after start). Please speak with the session coordinator.",
-    closesAt: new Date(closesAtMs).toISOString(),
-  });
-}
+  if (nowMs > closesAtMs) {
+    return json(true, {
+      approved: false,
+      status: "check-in closed",
+      message: "Check-in is closed for this session (90 minutes after start). Please speak with the session coordinator.",
+      closesAt: new Date(closesAtMs).toISOString(),
+    });
+  }
 
-  // Waiver verification for current year
   const waiverYear = new Date().getFullYear();
 
-  // Find ANY signed waiver for this email/year
   const { data: signedForYear, error: signedErr } = await supabase
     .from("waivers")
     .select("id,status,signed_at,external_document_id,external_provider,recipient_email,waiver_year")
@@ -245,69 +278,53 @@ if (nowMs > closesAtMs) {
 
   let hasSignedWaiver = !!signedForYear?.id;
 
-// If DB says "not signed", do a LIVE SignNow check for the most recent waiver doc
-// so a guest who signs at the door can immediately re-check-in and be approved.
-if (!hasSignedWaiver) {
-  const { data: latestWaiver } = await supabase
-    .from("waivers")
-    .select("id, external_document_id, status, signed_at, sent_at")
-    .eq("recipient_email", email)
-    .eq("waiver_year", waiverYear)
-    .not("external_document_id", "is", null)
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // LIVE SignNow check if DB not signed yet
+  if (!hasSignedWaiver) {
+    const { data: latestWaiverRow, error: latestErr } = await supabase
+      .from("waivers")
+      .select("id, external_document_id, status, waiver_year, sent_at")
+      .eq("recipient_email", email)
+      .eq("waiver_year", waiverYear)
+      .not("external_document_id", "is", null)
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  const docId = latestWaiver?.external_document_id ?? null;
+    if (!latestErr && latestWaiverRow?.external_document_id) {
+      const docId = String(latestWaiverRow.external_document_id).trim();
 
-  if (docId) {
-    try {
-      const doc = await signNow.signNowGetDocument(docId);
+      try {
+        const doc = await signNow.signNowGetDocument(docId);
 
-      // Be tolerant of SignNow response shape; treat "completed/signed" as signed.
-      const rawStatus =
-        String(
-          (doc as any)?.status ??
-            (doc as any)?.document_status ??
-            (doc as any)?.signing_status ??
-            (doc as any)?.state ??
-            ""
-        ).toLowerCase();
+        if (looksCompleted(doc)) {
+          const nowIso = new Date().toISOString();
+          const { error: upErr } = await supabase
+            .from("waivers")
+            .update({
+              status: "signed",
+              signed_at: nowIso,
+              updated_at: nowIso,
+            })
+            .eq("id", latestWaiverRow.id);
 
-      const looksSigned =
-        rawStatus.includes("completed") ||
-        rawStatus.includes("signed") ||
-        rawStatus.includes("fulfilled") ||
-        rawStatus === "complete";
-
-      if (looksSigned) {
-        const nowIso = new Date().toISOString();
-
-        await supabase
-          .from("waivers")
-          .update({
-            status: "signed",
-            signed_at: nowIso,
-            updated_at: nowIso,
-          })
-          .eq("id", latestWaiver!.id);
-
-        hasSignedWaiver = true;
-
-        console.log("[checkin] waiver live-check: SIGNED", { email, waiverYear, docId, rawStatus });
-      } else {
-        console.log("[checkin] waiver live-check: NOT signed", { email, waiverYear, docId, rawStatus });
+          if (!upErr) {
+            hasSignedWaiver = true;
+            console.log("[checkin] live waiver check: MARKED SIGNED", { waiverId: latestWaiverRow.id, docId });
+          } else {
+            console.warn("[checkin] live waiver check: failed to update waiver row", upErr.message);
+          }
+        } else {
+          console.log("[checkin] live waiver check: not completed", { waiverId: latestWaiverRow.id, docId });
+        }
+      } catch (e: any) {
+        console.warn("[checkin] live waiver check: signnow fetch failed", e?.message);
       }
-    } catch (e: any) {
-      console.error("[checkin] waiver live-check failed", { docId, msg: e?.message });
-      // fall through to normal "not signed" behavior
     }
   }
-}
 
+  // Still not signed → send instant signing link (cooldown)
   if (!hasSignedWaiver) {
-// Cooldown: prevent repeated waiver reminders for the same person/session in a short window
-    const cooldownStartIso = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 minutes
+    const cooldownStartIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
     const { count: recentDeniedCount } = await supabase
       .from("checkins")
@@ -318,68 +335,49 @@ if (!hasSignedWaiver) {
       .gte("created_at", cooldownStartIso);
 
     const recentlyReminded = (recentDeniedCount ?? 0) > 0;
-  // If there is a waiver row with a document id (sent previously), re-send invite.
-  const { data: anyWaiverRow, error: anyWaiverErr } = await supabase
-    .from("waivers")
-    .select("id,status,external_document_id,external_provider,recipient_email,waiver_year,sent_at")
-    .eq("recipient_email", email)
-    .eq("waiver_year", waiverYear)
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
 
-  if (anyWaiverErr) {
-    console.error("[checkin] waiver row lookup error", anyWaiverErr.message);
-  }
+    let waiverEmailSent = false;
 
-  const docId = anyWaiverRow?.external_document_id ?? null;
+    if (!recentlyReminded) {
+      const { data: anyWaiverRow } = await supabase
+        .from("waivers")
+        .select("external_document_id, sent_at")
+        .eq("recipient_email", email)
+        .eq("waiver_year", waiverYear)
+        .not("external_document_id", "is", null)
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-  let signnowInviteOk = false;
+      const docId = anyWaiverRow?.external_document_id ?? null;
 
-if (!recentlyReminded) {
-      try {
-  if (docId) {
-    // Fast path: create a signing link and send via our mailer (avoids SignNow email delays)
-    const linkRes = await signNow.signNowCreateSigningLink({ documentId: docId });
+      if (docId) {
+        try {
+          const linkRes = await signNow.signNowCreateSigningLink({ documentId: docId });
 
-    const signingUrl =
-      linkRes?.url ||
-      linkRes?.link ||
-      linkRes?.data?.url ||
-      linkRes?.data?.link ||
-      null;
+          const signingUrl = linkRes?.url || linkRes?.link || linkRes?.data?.url || linkRes?.data?.link || null;
 
-    if (!signingUrl) {
-      console.error("[checkin] signNowCreateSigningLink missing url", { linkRes });
-      await sendEmail(
-        email,
-        `Waiver required to check in (${waiverYear})`,
-        `
-          <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
-          <p>We were unable to generate a signing link automatically. Please speak with the session coordinator.</p>
-          <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
-        `
-      );
-    } else {
-      await sendEmail(
-        email,
-        `Waiver required to check in (${waiverYear})`,
-        `
-          <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
-          <p>Please sign your waiver using this link:</p>
-          <p><a href="${signingUrl}"><strong>Sign Waiver Now</strong></a></p>
-          <p>If you believe you have already signed, please speak with the session coordinator.</p>
-          <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
-        `
-      );
-    }
-  } else {
-        // No existing SignNow doc id to resend.
-        // Do not send a second “reminder” email here (Calendly already handled initial waiver invite).
-        console.log("[checkin] no existing waiver doc to resend", { email, waiverYear });
-      }
-} catch (e: any) {
-        console.error("[checkin] waiver resend/send failed", e?.message);
+          if (signingUrl) {
+            const emailRes = await sendEmail(
+              email,
+              `Waiver required to check in (${waiverYear}) — Happens By Chance`,
+              `
+                <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
+                <p>Please sign your waiver using this link:</p>
+                <p><a href="${signingUrl}"><strong>Sign Waiver Now</strong></a></p>
+                <p>If you believe you have already signed, please speak with the session coordinator.</p>
+                <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
+              `
+            );
+            waiverEmailSent = emailRes?.ok ?? false;
+          } else {
+            console.error("[checkin] create signing link returned no url", { linkRes });
+          }
+        } catch (e: any) {
+          console.error("[checkin] waiver signing-link email failed", e?.message);
+        }
+      } else {
+        console.log("[checkin] no waiver doc id found for year; cannot generate signing link", { email, waiverYear });
       }
     } else {
       console.log("[checkin] waiver reminder suppressed (cooldown)", {
@@ -390,49 +388,26 @@ if (!recentlyReminded) {
       });
     }
 
-  // Always send *our* email too (instant), telling them what to look for.
-  const emailRes = await sendEmail(
-    email,
-    `Waiver required to check in (${waiverYear}) — Happens By Chance`,
-    `
-      <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
-      <p>
-        We have ${signnowInviteOk ? "re-sent" : "attempted to send"} your waiver request via SignNow.
-        Please look for an email with the subject:
-        <strong>“Happens By Chance — Waiver Required (${waiverYear})”</strong>.
-      </p>
-      <p>
-        If you believe you have already signed, please speak with the session coordinator.
-      </p>
-      <p>
-        If you don’t see the SignNow email, check spam/junk. For help, email
-        <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
-      </p>
-    `
-  );
+    await supabase.from("checkins").insert({
+      booking_id: null,
+      member_id: rsvp.member_id,
+      session_start: eventStartIso,
+      waiver_year: waiverYear,
+      waiver_verified: false,
+      entry_approved: false,
+      denied_reason: "WAIVER_NOT_SIGNED",
+    });
 
-  // Record delayed check-in
-  await supabase.from("checkins").insert({
-    booking_id: null,
-    member_id: rsvp.member_id,
-    session_start: eventStartIso,
-    waiver_year: waiverYear,
-    waiver_verified: false,
-    entry_approved: false,
-    denied_reason: "WAIVER_NOT_SIGNED",
-  });
+    return json(true, {
+      approved: false,
+      status: "check-in delayed — waiver not signed",
+      message:
+        "Check-in delayed — waiver is not confirmed signed. We emailed your waiver link. If you believe you have already signed, please speak with the session coordinator.",
+      waiver_email_sent: waiverEmailSent,
+    });
+  }
 
-  return json(true, {
-    approved: false,
-    status: "check-in delayed — waiver not signed",
-    message:
-      "Check-in delayed — waiver is not confirmed signed. We emailed you instructions. If you believe you have already signed, please speak with the session coordinator.",
-    waiver_email_sent: emailRes?.ok ?? false,
-    signnow_invite_sent: signnowInviteOk,
-  });
-}
-
-  // Approved check-in
+  // Approved
   await supabase.from("checkins").insert({
     booking_id: null,
     member_id: rsvp.member_id,
@@ -446,7 +421,8 @@ if (!recentlyReminded) {
   return json(true, {
     approved: true,
     status: "checked in",
-    message: "Checked in successfully. Welcome. Please find your place and enjoy the stand-in sound bowls at your leisure",
+    message:
+      "Checked in successfully. Welcome. Please find your place and enjoy the stand-in sound bowls at your leisure",
     member_id: rsvp.member_id,
     rsvp_id: rsvp.id,
   });

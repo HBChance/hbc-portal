@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
+import * as signNow from "@/lib/signnow";
 import { signNowGetDocument } from "@/lib/signnow";
 
 export const runtime = "nodejs";
@@ -47,22 +48,17 @@ function looksCompleted(doc: any): boolean {
       ""
   ).toLowerCase();
 
-  // 1) Obvious status words
   if (
     status.includes("completed") ||
     status.includes("complete") ||
     status.includes("signed") ||
     status.includes("fulfilled") ||
     status.includes("done")
-  ) {
-    return true;
-  }
+  ) return true;
 
-  // 2) Boolean flags
   if (doc?.is_completed === true || doc?.completed === true) return true;
   if (doc?.data?.is_completed === true || doc?.data?.completed === true) return true;
 
-  // Helper: does an array of participants look fully signed?
   const allSignedLike = (arr: any) => {
     if (!Array.isArray(arr) || arr.length === 0) return false;
     return arr.every((x: any) => {
@@ -77,12 +73,10 @@ function looksCompleted(doc: any): boolean {
     });
   };
 
-  // 3) Signers / recipients
   const signers = doc?.signers ?? doc?.data?.signers ?? null;
   const recipients = doc?.recipients ?? doc?.data?.recipients ?? null;
   if (allSignedLike(signers) || allSignedLike(recipients)) return true;
 
-  // 4) Invites (very common in SignNow)
   const invites = doc?.invites ?? doc?.data?.invites ?? null;
   if (allSignedLike(invites)) return true;
 
