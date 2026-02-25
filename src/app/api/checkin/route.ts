@@ -243,7 +243,67 @@ if (nowMs > closesAtMs) {
     return json(false, { error: signedErr.message }, 500);
   }
 
-  const hasSignedWaiver = !!signedForYear?.id;
+  let hasSignedWaiver = !!signedForYear?.id;
+
+// If DB says "not signed", do a LIVE SignNow check for the most recent waiver doc
+// so a guest who signs at the door can immediately re-check-in and be approved.
+if (!hasSignedWaiver) {
+  const { data: latestWaiver } = await supabase
+    .from("waivers")
+    .select("id, external_document_id, status, signed_at, sent_at")
+    .eq("recipient_email", email)
+    .eq("waiver_year", waiverYear)
+    .not("external_document_id", "is", null)
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const docId = latestWaiver?.external_document_id ?? null;
+
+  if (docId) {
+    try {
+      const doc = await signNow.signNowGetDocument(docId);
+
+      // Be tolerant of SignNow response shape; treat "completed/signed" as signed.
+      const rawStatus =
+        String(
+          (doc as any)?.status ??
+            (doc as any)?.document_status ??
+            (doc as any)?.signing_status ??
+            (doc as any)?.state ??
+            ""
+        ).toLowerCase();
+
+      const looksSigned =
+        rawStatus.includes("completed") ||
+        rawStatus.includes("signed") ||
+        rawStatus.includes("fulfilled") ||
+        rawStatus === "complete";
+
+      if (looksSigned) {
+        const nowIso = new Date().toISOString();
+
+        await supabase
+          .from("waivers")
+          .update({
+            status: "signed",
+            signed_at: nowIso,
+            updated_at: nowIso,
+          })
+          .eq("id", latestWaiver!.id);
+
+        hasSignedWaiver = true;
+
+        console.log("[checkin] waiver live-check: SIGNED", { email, waiverYear, docId, rawStatus });
+      } else {
+        console.log("[checkin] waiver live-check: NOT signed", { email, waiverYear, docId, rawStatus });
+      }
+    } catch (e: any) {
+      console.error("[checkin] waiver live-check failed", { docId, msg: e?.message });
+      // fall through to normal "not signed" behavior
+    }
+  }
+}
 
   if (!hasSignedWaiver) {
 // Cooldown: prevent repeated waiver reminders for the same person/session in a short window
