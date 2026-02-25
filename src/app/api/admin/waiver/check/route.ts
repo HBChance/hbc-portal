@@ -104,26 +104,49 @@ export async function POST(req: Request) {
     // Optional: member_id for targeted check
     const body = await req.json().catch(() => ({}));
     const member_id = body?.member_id ? String(body.member_id) : null;
+// If member_id provided, resolve member email so we can target waivers correctly
+let targetEmail: string | null = null;
 
-    // Load unsigned waivers (this year) that have a SignNow document id
-    let q = admin
-      .from("waivers")
-      .select("id, member_id, status, external_document_id")
-      .eq("waiver_year", WAIVER_YEAR)
-      .not("external_document_id", "is", null);
+if (member_id) {
+  const { data: mRow, error: mErr } = await admin
+    .from("members")
+    .select("email")
+    .eq("id", member_id)
+    .maybeSingle();
 
-    if (member_id) q = q.eq("member_id", member_id);
+  if (mErr) return NextResponse.json({ error: mErr.message }, { status: 400 });
+  targetEmail = mRow?.email ? String(mRow.email).toLowerCase().trim() : null;
+}
+    // Load waivers (this year) that have a SignNow document id
+// IMPORTANT: target by recipient_email when member_id is provided (member_id can be null on waiver rows)
+let q = admin
+  .from("waivers")
+  .select("id, member_id, recipient_email, status, external_document_id, sent_at")
+  .eq("waiver_year", WAIVER_YEAR)
+  .not("external_document_id", "is", null)
+  .order("sent_at", { ascending: false });
 
-    const { data: rows, error: wErr } = await q;
+if (targetEmail) q = q.eq("recipient_email", targetEmail);
+
+const { data: rows, error: wErr } = await q;
     if (wErr) return NextResponse.json({ error: wErr.message }, { status: 400 });
 
     const waivers = (rows ?? []).filter((w: any) => String(w.status ?? "").toLowerCase() !== "signed");
 
+// Only check the most recent waiver per recipient_email (prevents checking stale docs)
+// rows are already ordered by sent_at desc above, so the first one we see per email is the newest
+const byEmail = new Map<string, any>();
+for (const w of waivers) {
+  const em = String(w.recipient_email ?? "").toLowerCase().trim();
+  if (!em) continue;
+  if (!byEmail.has(em)) byEmail.set(em, w);
+}
+const candidates = Array.from(byEmail.values());
     let checked = 0;
     let marked_signed = 0;
     const errors: Array<{ waiver_id: string; error: string }> = [];
 const debug_docs: any[] = [];
-    for (const w of waivers) {
+    for (const w of candidates) {
       const docId = String(w.external_document_id ?? "").trim();
       if (!docId) continue;
 
@@ -198,7 +221,7 @@ console.log("[waiver-check] doc snapshot", {
     return NextResponse.json({
       ok: true,
       member_id,
-      total_candidates: waivers.length,
+      total_candidates: candidates.length,
       checked,
       marked_signed,
       errors,
