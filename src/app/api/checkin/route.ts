@@ -44,25 +44,17 @@ function fmtLa(iso: string) {
     minute: "2-digit",
   });
 }
-
-function json(ok: boolean, payload: any, status = 200) {
-  return NextResponse.json({ ok, ...payload }, { status });
-}
-
-/**
- * SAME completion heuristic as /api/admin/waiver/check
- * (Copied here so check-in can live-verify SignNow completion immediately.)
- */
 function looksCompleted(doc: any): boolean {
-  const status = String(
-    doc?.status ??
-      doc?.document_status ??
-      doc?.state ??
-      doc?.data?.status ??
-      doc?.data?.document_status ??
-      doc?.data?.state ??
-      ""
-  ).toLowerCase();
+  const s = (v: any) => String(v ?? "").toLowerCase();
+
+  // Common top-level / nested status fields
+  const status =
+    s(doc?.status) ||
+    s(doc?.document_status) ||
+    s(doc?.state) ||
+    s(doc?.data?.status) ||
+    s(doc?.data?.document_status) ||
+    s(doc?.data?.state);
 
   if (
     status.includes("completed") ||
@@ -74,31 +66,34 @@ function looksCompleted(doc: any): boolean {
     return true;
   }
 
+  // Boolean flags
   if (doc?.is_completed === true || doc?.completed === true) return true;
   if (doc?.data?.is_completed === true || doc?.data?.completed === true) return true;
 
+  // Helper: array items are all signed-like
   const allSignedLike = (arr: any) => {
     if (!Array.isArray(arr) || arr.length === 0) return false;
     return arr.every((x: any) => {
-      const s = String(x?.status ?? x?.signing_status ?? x?.state ?? "").toLowerCase();
-      return (
-        x?.signed === true ||
-        s.includes("signed") ||
-        s.includes("completed") ||
-        s.includes("complete") ||
-        s.includes("fulfilled")
-      );
+      const st = s(x?.status ?? x?.signing_status ?? x?.state);
+      return x?.signed === true || st.includes("signed") || st.includes("complete") || st.includes("fulfilled");
     });
   };
 
+  // These are common arrays in SignNow responses
+  const invites = doc?.invites ?? doc?.data?.invites ?? null;
   const signers = doc?.signers ?? doc?.data?.signers ?? null;
   const recipients = doc?.recipients ?? doc?.data?.recipients ?? null;
-  if (allSignedLike(signers) || allSignedLike(recipients)) return true;
 
-  const invites = doc?.invites ?? doc?.data?.invites ?? null;
-  if (allSignedLike(invites)) return true;
+  if (allSignedLike(invites) || allSignedLike(signers) || allSignedLike(recipients)) return true;
+
+  // VERY common in SignNow: field_invites indicates completion
+  const fieldInvites = doc?.field_invites ?? doc?.data?.field_invites ?? null;
+  if (allSignedLike(fieldInvites)) return true;
 
   return false;
+}
+function json(ok: boolean, payload: any, status = 200) {
+  return NextResponse.json({ ok, ...payload }, { status });
 }
 
 async function sendEmail(to: string, subject: string, html: string) {
@@ -295,7 +290,23 @@ export async function POST(req: Request) {
 
       try {
         const doc = await signNow.signNowGetDocument(docId);
-
+console.log("[checkin] signnow doc summary", {
+  docId,
+  status: doc?.status ?? null,
+  document_status: doc?.document_status ?? null,
+  state: doc?.state ?? null,
+  is_completed: doc?.is_completed ?? null,
+  completed: doc?.completed ?? null,
+  data_status: doc?.data?.status ?? null,
+  data_document_status: doc?.data?.document_status ?? null,
+  data_state: doc?.data?.state ?? null,
+  data_is_completed: doc?.data?.is_completed ?? null,
+  data_completed: doc?.data?.completed ?? null,
+  field_invites_len: Array.isArray(doc?.field_invites) ? doc.field_invites.length : null,
+  invites_len: Array.isArray(doc?.invites) ? doc.invites.length : null,
+  signers_len: Array.isArray(doc?.signers) ? doc.signers.length : null,
+  recipients_len: Array.isArray(doc?.recipients) ? doc.recipients.length : null,
+});
         if (looksCompleted(doc)) {
           const nowIso = new Date().toISOString();
           const { error: upErr } = await supabase

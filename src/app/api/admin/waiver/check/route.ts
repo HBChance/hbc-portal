@@ -38,7 +38,9 @@ function summarizeSignNowDoc(doc: any) {
   };
 }
 function looksCompleted(doc: any): boolean {
-  const status = String(
+  const s = (v: any) => String(v ?? "").toLowerCase();
+
+  const status = s(
     doc?.status ??
       doc?.document_status ??
       doc?.state ??
@@ -46,7 +48,7 @@ function looksCompleted(doc: any): boolean {
       doc?.data?.document_status ??
       doc?.data?.state ??
       ""
-  ).toLowerCase();
+  );
 
   if (
     status.includes("completed") ||
@@ -54,7 +56,9 @@ function looksCompleted(doc: any): boolean {
     status.includes("signed") ||
     status.includes("fulfilled") ||
     status.includes("done")
-  ) return true;
+  ) {
+    return true;
+  }
 
   if (doc?.is_completed === true || doc?.completed === true) return true;
   if (doc?.data?.is_completed === true || doc?.data?.completed === true) return true;
@@ -62,23 +66,19 @@ function looksCompleted(doc: any): boolean {
   const allSignedLike = (arr: any) => {
     if (!Array.isArray(arr) || arr.length === 0) return false;
     return arr.every((x: any) => {
-      const s = String(x?.status ?? x?.signing_status ?? x?.state ?? "").toLowerCase();
-      return (
-        x?.signed === true ||
-        s.includes("signed") ||
-        s.includes("completed") ||
-        s.includes("complete") ||
-        s.includes("fulfilled")
-      );
+      const st = s(x?.status ?? x?.signing_status ?? x?.state);
+      return x?.signed === true || st.includes("signed") || st.includes("complete") || st.includes("fulfilled");
     });
   };
 
   const signers = doc?.signers ?? doc?.data?.signers ?? null;
   const recipients = doc?.recipients ?? doc?.data?.recipients ?? null;
-  if (allSignedLike(signers) || allSignedLike(recipients)) return true;
-
   const invites = doc?.invites ?? doc?.data?.invites ?? null;
-  if (allSignedLike(invites)) return true;
+  const fieldInvites = doc?.field_invites ?? doc?.data?.field_invites ?? null;
+
+  if (allSignedLike(signers) || allSignedLike(recipients) || allSignedLike(invites) || allSignedLike(fieldInvites)) {
+    return true;
+  }
 
   return false;
 }
