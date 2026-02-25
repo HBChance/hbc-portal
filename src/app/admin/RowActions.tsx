@@ -13,7 +13,7 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | null;
+  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -191,7 +191,39 @@ console.log("[waiver-check] response", out);
       >
         {busy === "remind" ? "Sending…" : "Remind waiver"}
       </button>
+<button
+  type="button"
+  disabled={busy !== null}
+  onClick={async () => {
+    setMsg(null);
 
+    const rsvpId = window.prompt("Paste RSVP ID to mark as NO-SHOW:");
+    if (!rsvpId) return;
+
+    setBusy("noshow");
+    try {
+      await postJson("/api/admin/noshow/mark", { rsvp_id: rsvpId.trim() });
+      setMsg("No-show marked");
+      window.location.reload();
+    } catch (e: any) {
+      setMsg(e?.message || "Failed");
+    } finally {
+      setBusy(null);
+    }
+  }}
+  style={{
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "6px 10px",
+    fontSize: 12,
+    background: "white",
+    opacity: busy !== null ? 0.5 : 1,
+    cursor: busy !== null ? "not-allowed" : "pointer",
+  }}
+  title="Mark a specific RSVP as a no-show (only allowed after check-in closes)"
+>
+  {busy === "noshow" ? "Marking…" : "Mark no-show"}
+</button>
       {msg ? <span style={{ fontSize: 12, color: "#64748b" }}>{msg}</span> : null}
     </div>
   );

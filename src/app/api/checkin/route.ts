@@ -209,6 +209,7 @@ export async function POST(req: Request) {
     );
 
     await supabase.from("checkins").insert({
+      rsvp_id: null,
       booking_id: null,
       member_id: null,
       session_start: sessionStartIso,
@@ -400,6 +401,7 @@ console.log("[checkin] signnow doc summary", {
     }
 
     await supabase.from("checkins").insert({
+      rsvp_id: rsvp.id,
       booking_id: null,
       member_id: rsvp.member_id,
       session_start: eventStartIso,
@@ -420,6 +422,7 @@ console.log("[checkin] signnow doc summary", {
 
   // Approved
   await supabase.from("checkins").insert({
+    rsvp_id: rsvp.id,
     booking_id: null,
     member_id: rsvp.member_id,
     session_start: eventStartIso,
