@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import * as signNow from "@/lib/signnow";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 /**
  * Door check-in endpoint (QR -> POST).
  *
@@ -20,6 +23,7 @@ import * as signNow from "@/lib/signnow";
  *   - If still not signed, emails instant signing link (via SignNow link + your mailer), with cooldown
  * - If no RSVP: sends $45 purchase link email + records denied checkin row
  * - If approved: records checkins row entry_approved=true, waiver_verified=true
+ * - After successful check-in: sends a membership offer email (only once per member, guarded)
  */
 
 const LINKS = {
@@ -44,10 +48,10 @@ function fmtLa(iso: string) {
     minute: "2-digit",
   });
 }
+
 function looksCompleted(doc: any): boolean {
   const s = (v: any) => String(v ?? "").toLowerCase();
 
-  // Common top-level / nested status fields
   const status =
     s(doc?.status) ||
     s(doc?.document_status) ||
@@ -66,11 +70,9 @@ function looksCompleted(doc: any): boolean {
     return true;
   }
 
-  // Boolean flags
   if (doc?.is_completed === true || doc?.completed === true) return true;
   if (doc?.data?.is_completed === true || doc?.data?.completed === true) return true;
 
-  // Helper: array items are all signed-like
   const allSignedLike = (arr: any) => {
     if (!Array.isArray(arr) || arr.length === 0) return false;
     return arr.every((x: any) => {
@@ -79,19 +81,17 @@ function looksCompleted(doc: any): boolean {
     });
   };
 
-  // These are common arrays in SignNow responses
   const invites = doc?.invites ?? doc?.data?.invites ?? null;
   const signers = doc?.signers ?? doc?.data?.signers ?? null;
   const recipients = doc?.recipients ?? doc?.data?.recipients ?? null;
-
   if (allSignedLike(invites) || allSignedLike(signers) || allSignedLike(recipients)) return true;
 
-  // VERY common in SignNow: field_invites indicates completion
   const fieldInvites = doc?.field_invites ?? doc?.data?.field_invites ?? null;
   if (allSignedLike(fieldInvites)) return true;
 
   return false;
 }
+
 function json(ok: boolean, payload: any, status = 200) {
   return NextResponse.json({ ok, ...payload }, { status });
 }
@@ -120,6 +120,99 @@ async function sendEmail(to: string, subject: string, html: string) {
 
   console.log("[checkin] sendEmail ok", { to, subject });
   return { ok: true };
+}
+
+async function maybeSendMembershipOffer(opts: {
+  supabase: ReturnType<typeof createSupabaseAdminClient>;
+  memberId: string;
+  rsvpInviteeName?: string | null;
+}) {
+  const { supabase, memberId, rsvpInviteeName } = opts;
+
+  // 1) Resolve member email (send to payer, not guest email)
+  const { data: mRow, error: mErr } = await supabase
+    .from("members")
+    .select("email,first_name,last_name")
+    .eq("id", memberId)
+    .maybeSingle();
+
+  if (mErr) {
+    console.warn("[checkin] membership-offer: member lookup error", mErr.message);
+    return { attempted: false, sent: false, reason: "member_lookup_failed" as const };
+  }
+
+  const memberEmail = mRow?.email ? normEmail(String(mRow.email)) : null;
+  if (!memberEmail) return { attempted: false, sent: false, reason: "member_missing_email" as const };
+
+  // 2) Only send if member currently has no credits (simple + conservative)
+  const { data: balRow, error: balErr } = await supabase
+    .from("v_member_credit_balance")
+    .select("member_id,balance")
+    .eq("member_id", memberId)
+    .maybeSingle();
+
+  if (balErr) {
+    console.warn("[checkin] membership-offer: balance lookup error", balErr.message);
+    return { attempted: false, sent: false, reason: "balance_lookup_failed" as const };
+  }
+
+  const balance = Number((balRow as any)?.balance ?? 0);
+  if (balance > 0) {
+    return { attempted: false, sent: false, reason: "has_credits" as const };
+  }
+
+  // 3) Guard: send only on the FIRST approved check-in we ever see for this member
+  // (prevents spamming; if you ever want a “once per 30 days” rule, we can change it later)
+  const { count: approvedCount, error: cErr } = await supabase
+    .from("checkins")
+    .select("id", { count: "exact", head: true })
+    .eq("member_id", memberId)
+    .eq("entry_approved", true);
+
+  if (cErr) {
+    console.warn("[checkin] membership-offer: count lookup error", cErr.message);
+    return { attempted: false, sent: false, reason: "count_lookup_failed" as const };
+  }
+
+  // If they've already had an approved check-in before this one, skip.
+  // IMPORTANT: this function should be called AFTER the approved check-in insert,
+  // so “first ever” means approvedCount === 1.
+  if ((approvedCount ?? 0) !== 1) {
+    return { attempted: false, sent: false, reason: "not_first_checkin" as const };
+  }
+
+  const firstName =
+    String(mRow?.first_name ?? "").trim() ||
+    String(rsvpInviteeName ?? "").trim().split(" ")[0] ||
+    "there";
+
+  const emailRes = await sendEmail(
+    memberEmail,
+    "Unlock member pricing for your next session — Happens By Chance",
+    `
+      <p>Hi ${firstName},</p>
+
+      <p>You’re checked in — welcome. If you’d like to make future sessions simpler (and less expensive), you can unlock member pricing now:</p>
+
+      <ul>
+        <li>
+          <a href="${LINKS.oneSessionMembershipLink}"><strong>Monthly 1-credit membership</strong></a>
+          <span style="color:#64748b;"> (one session per month)</span>
+        </li>
+        <li>
+          <a href="${LINKS.fourSessionMembershipLink}"><strong>Monthly 4-credit membership</strong></a>
+          <span style="color:#64748b;"> (best value if you plan to come weekly)</span>
+        </li>
+      </ul>
+
+      <p style="color:#64748b;">
+        Questions? Reply to this email or reach us at
+        <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
+      </p>
+    `
+  );
+
+  return { attempted: true, sent: emailRes?.ok ?? false, reason: "sent_or_failed" as const };
 }
 
 export async function POST(req: Request) {
@@ -163,7 +256,8 @@ export async function POST(req: Request) {
   const sessionStartMs = Date.parse(sessionStartRaw);
 
   if (!email || !email.includes("@")) return json(false, { error: "Valid email is required." }, 400);
-  if (!sessionStartRaw || !Number.isFinite(sessionStartMs)) return json(false, { error: "Valid sessionStart (ISO) is required." }, 400);
+  if (!sessionStartRaw || !Number.isFinite(sessionStartMs))
+    return json(false, { error: "Valid sessionStart (ISO) is required." }, 400);
 
   const sessionStartIso = new Date(sessionStartMs).toISOString();
   const nowMs = Date.now();
@@ -291,23 +385,25 @@ export async function POST(req: Request) {
 
       try {
         const doc = await signNow.signNowGetDocument(docId);
-console.log("[checkin] signnow doc summary", {
-  docId,
-  status: doc?.status ?? null,
-  document_status: doc?.document_status ?? null,
-  state: doc?.state ?? null,
-  is_completed: doc?.is_completed ?? null,
-  completed: doc?.completed ?? null,
-  data_status: doc?.data?.status ?? null,
-  data_document_status: doc?.data?.document_status ?? null,
-  data_state: doc?.data?.state ?? null,
-  data_is_completed: doc?.data?.is_completed ?? null,
-  data_completed: doc?.data?.completed ?? null,
-  field_invites_len: Array.isArray(doc?.field_invites) ? doc.field_invites.length : null,
-  invites_len: Array.isArray(doc?.invites) ? doc.invites.length : null,
-  signers_len: Array.isArray(doc?.signers) ? doc.signers.length : null,
-  recipients_len: Array.isArray(doc?.recipients) ? doc.recipients.length : null,
-});
+
+        console.log("[checkin] signnow doc summary", {
+          docId,
+          status: doc?.status ?? null,
+          document_status: doc?.document_status ?? null,
+          state: doc?.state ?? null,
+          is_completed: doc?.is_completed ?? null,
+          completed: doc?.completed ?? null,
+          data_status: doc?.data?.status ?? null,
+          data_document_status: doc?.data?.document_status ?? null,
+          data_state: doc?.data?.state ?? null,
+          data_is_completed: doc?.data?.is_completed ?? null,
+          data_completed: doc?.data?.completed ?? null,
+          field_invites_len: Array.isArray(doc?.field_invites) ? doc.field_invites.length : null,
+          invites_len: Array.isArray(doc?.invites) ? doc.invites.length : null,
+          signers_len: Array.isArray(doc?.signers) ? doc.signers.length : null,
+          recipients_len: Array.isArray(doc?.recipients) ? doc.recipients.length : null,
+        });
+
         if (looksCompleted(doc)) {
           const nowIso = new Date().toISOString();
           const { error: upErr } = await supabase
@@ -366,7 +462,6 @@ console.log("[checkin] signnow doc summary", {
       if (docId) {
         try {
           const linkRes = await signNow.signNowCreateSigningLink({ documentId: docId });
-
           const signingUrl = linkRes?.url || linkRes?.link || linkRes?.data?.url || linkRes?.data?.link || null;
 
           if (signingUrl) {
@@ -420,8 +515,8 @@ console.log("[checkin] signnow doc summary", {
     });
   }
 
-  // Approved
-  await supabase.from("checkins").insert({
+  // Approved check-in insert (idempotent-ish: we allow multiple, but it’s okay operationally)
+  const { error: ckErr } = await supabase.from("checkins").insert({
     rsvp_id: rsvp.id,
     booking_id: null,
     member_id: rsvp.member_id,
@@ -432,11 +527,27 @@ console.log("[checkin] signnow doc summary", {
     denied_reason: null,
   });
 
+  if (ckErr) {
+    console.error("[checkin] failed to insert approved checkin", ckErr.message);
+    // Still let them in; don’t block entry on logging failure.
+  }
+
+  // Membership offer (best-effort, never blocks check-in)
+  try {
+    const offerRes = await maybeSendMembershipOffer({
+      supabase,
+      memberId: rsvp.member_id,
+      rsvpInviteeName: rsvp.invitee_name ?? null,
+    });
+    console.log("[checkin] membership-offer", { memberId: rsvp.member_id, ...offerRes });
+  } catch (e: any) {
+    console.warn("[checkin] membership-offer failed", e?.message);
+  }
+
   return json(true, {
     approved: true,
     status: "checked in",
-    message:
-      "Checked in successfully. Welcome. Please find your place and enjoy the stand-in sound bowls at your leisure",
+    message: "Checked in successfully. Welcome. Please find your place and enjoy the stand-in sound bowls at your leisure",
     member_id: rsvp.member_id,
     rsvp_id: rsvp.id,
   });

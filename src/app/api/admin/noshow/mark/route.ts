@@ -75,6 +75,7 @@ export async function POST(req: Request) {
       invitee_email: rsvp.invitee_email ?? null,
       invitee_name: rsvp.invitee_name ?? null,
       marked_by: me.id,
+      note: "Marked from /admin",
     },
     { onConflict: "rsvp_id" }
   );
