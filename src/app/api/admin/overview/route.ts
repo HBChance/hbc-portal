@@ -96,8 +96,10 @@ const WAIVER_YEAR = new Date().getFullYear();
 const { data: waivers, error: wErr } = await supabase
   .from("waivers")
   .select("member_id,recipient_email,status,sent_at,signed_at,waiver_year,calendly_invitee_uri,attendee_name")
-  .eq("waiver_year", WAIVER_YEAR);
-
+  .eq("waiver_year", WAIVER_YEAR)
+  // Prefer signed rows, then most recently sent rows
+  .order("signed_at", { ascending: false, nullsFirst: false })
+  .order("sent_at", { ascending: false, nullsFirst: false });
 if (wErr) {
   return NextResponse.json({ error: wErr.message }, { status: 500 });
 }
@@ -125,7 +127,7 @@ for (const w of waivers ?? []) {
     waiverStatusByMemberId.set(w.member_id, bump(cur, s));
   }
 
-  const em = String(w.recipient_email ?? "").toLowerCase().trim();
+  const em = w.recipient_email ? String(w.recipient_email).toLowerCase().trim() : "";
   if (em) {
     const cur = waiverStatusByEmail.get(em) ?? "missing";
     waiverStatusByEmail.set(em, bump(cur, s));
