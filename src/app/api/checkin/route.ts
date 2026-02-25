@@ -246,6 +246,18 @@ if (nowMs > closesAtMs) {
   const hasSignedWaiver = !!signedForYear?.id;
 
   if (!hasSignedWaiver) {
+// Cooldown: prevent repeated waiver reminders for the same person/session in a short window
+    const cooldownStartIso = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 minutes
+
+    const { count: recentDeniedCount } = await supabase
+      .from("checkins")
+      .select("id", { count: "exact", head: true })
+      .eq("member_id", rsvp.member_id)
+      .eq("session_start", eventStartIso)
+      .eq("denied_reason", "WAIVER_NOT_SIGNED")
+      .gte("created_at", cooldownStartIso);
+
+    const recentlyReminded = (recentDeniedCount ?? 0) > 0;
   // If there is a waiver row with a document id (sent previously), re-send invite.
   const { data: anyWaiverRow, error: anyWaiverErr } = await supabase
     .from("waivers")
@@ -264,7 +276,8 @@ if (nowMs > closesAtMs) {
 
   let signnowInviteOk = false;
 
-  try {
+if (!recentlyReminded) {
+      try {
   if (docId) {
     // Fast path: create a signing link and send via our mailer (avoids SignNow email delays)
     const linkRes = await signNow.signNowCreateSigningLink({ documentId: docId });
@@ -301,20 +314,21 @@ if (nowMs > closesAtMs) {
       );
     }
   } else {
-    // No existing doc on file yet — still email instructions (Calendly flow creates the doc on RSVP)
-    await sendEmail(
-      email,
-      `Waiver required to check in (${waiverYear})`,
-      `
-        <p><strong>Check-in delayed</strong> — waiver is not confirmed signed for ${waiverYear}.</p>
-        <p>Please check your email for a waiver request. If you believe you have already signed, please speak with the session coordinator.</p>
-        <p>If you need help, email <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.</p>
-      `
-    );
-  }
+        // No existing SignNow doc id to resend.
+        // Do not send a second “reminder” email here (Calendly already handled initial waiver invite).
+        console.log("[checkin] no existing waiver doc to resend", { email, waiverYear });
+      }
 } catch (e: any) {
-  console.error("[checkin] waiver link/send failed", e?.message);
-}
+        console.error("[checkin] waiver resend/send failed", e?.message);
+      }
+    } else {
+      console.log("[checkin] waiver reminder suppressed (cooldown)", {
+        email,
+        waiverYear,
+        memberId: rsvp.member_id,
+        session_start: eventStartIso,
+      });
+    }
 
   // Always send *our* email too (instant), telling them what to look for.
   const emailRes = await sendEmail(
