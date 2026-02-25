@@ -102,22 +102,41 @@ if (wErr) {
   return NextResponse.json({ error: wErr.message }, { status: 500 });
 }
 
-const waiverByMemberId = new Map<string, any>();
-const waiverByEmail = new Map<string, any>();
-const waiverByInviteeUri = new Map<string, any>();
+// Aggregate status per key (prefer signed over sent over missing)
+type WStatus = "missing" | "sent" | "signed";
+const bump = (cur: WStatus, next: WStatus): WStatus => {
+  if (cur === "signed" || next === "signed") return "signed";
+  if (cur === "sent" || next === "sent") return "sent";
+  return "missing";
+};
+
+const waiverStatusByMemberId = new Map<string, WStatus>();
+const waiverStatusByEmail = new Map<string, WStatus>();
+const waiverStatusByInviteeUri = new Map<string, WStatus>();
 
 for (const w of waivers ?? []) {
-  if (w.member_id) waiverByMemberId.set(w.member_id, w);
-  if (w.recipient_email) waiverByEmail.set(String(w.recipient_email).toLowerCase(), w);
-  if (w.calendly_invitee_uri) waiverByInviteeUri.set(w.calendly_invitee_uri, w);
-  if ((w as any).calendly_invitee_uri) {
-    waiverByInviteeUri.set(String((w as any).calendly_invitee_uri), w);
+  const isSigned = String(w.status ?? "").toLowerCase() === "signed" || !!w.signed_at;
+  const isSent = String(w.status ?? "").toLowerCase() === "sent" || !!w.sent_at;
+
+  const s: WStatus = isSigned ? "signed" : isSent ? "sent" : "missing";
+
+  if (w.member_id) {
+    const cur = waiverStatusByMemberId.get(w.member_id) ?? "missing";
+    waiverStatusByMemberId.set(w.member_id, bump(cur, s));
+  }
+
+  const em = String(w.recipient_email ?? "").toLowerCase().trim();
+  if (em) {
+    const cur = waiverStatusByEmail.get(em) ?? "missing";
+    waiverStatusByEmail.set(em, bump(cur, s));
   }
 
   const uri = String((w as any).calendly_invitee_uri ?? "").trim();
-  if (uri) waiverByInviteeUri.set(uri, w);
+  if (uri) {
+    const cur = waiverStatusByInviteeUri.get(uri) ?? "missing";
+    waiverStatusByInviteeUri.set(uri, bump(cur, s));
+  }
 }
-
   // 4) Latest booking pass per member
   const { data: passes, error: passErr } = await supabase
     .from("booking_passes")
@@ -177,7 +196,6 @@ for (const r of rsvps ?? []) {
   if (looksLikeSelf) continue;
 
   const inviteeUri = String((r as any).calendly_invitee_uri ?? "").trim() || null;
-  const waiverRowForInvitee = inviteeUri ? waiverByInviteeUri.get(inviteeUri) : null;
 
   const arr = guestsByMember.get(r.member_id) ?? [];
   arr.push({
@@ -185,7 +203,7 @@ for (const r of rsvps ?? []) {
     invitee_email: r.invitee_email ?? null,
     invitee_name: inviteeName || null,
     event_start_at: (r as any).event_start_at ?? null,
-    waiver_status: (waiverRowForInvitee?.status as any) ?? undefined,
+    waiver_status: inviteeUri ? (waiverStatusByInviteeUri.get(inviteeUri) as any) ?? "missing" : "missing",
     status: r.status ?? "created",
   });
   guestsByMember.set(r.member_id, arr);
@@ -213,14 +231,12 @@ const balance = Number(b.balance ?? 0);
 
 // ----- Waiver status (compute FIRST so flags can use it)
 const waiverStatus: "missing" | "sent" | "signed" = (() => {
-  const w =
-    waiverByMemberId.get(b.member_id) ??
-    (m?.email ? waiverByEmail.get(String(m.email).toLowerCase()) : null);
+  const fromMember = waiverStatusByMemberId.get(b.member_id) ?? "missing";
+  if (fromMember !== "missing") return fromMember;
 
-  if (!w) return "missing";
-  if (w.status === "signed") return "signed";
-  if (w.status === "sent") return "sent";
-  return "missing";
+  const em = String(m?.email ?? "").toLowerCase().trim();
+  if (!em) return "missing";
+  return waiverStatusByEmail.get(em) ?? "missing";
 })();
 
 // ----- Flags (now safe to reference waiverStatus)
