@@ -3,89 +3,138 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type Slot = { weekday: number; hour: number; minute: number; label: string };
+
+// Tue = 2, Thu = 4 when using Intl weekday strings; we’ll map using names below.
+const SLOTS: Slot[] = [
+  { weekday: 2, hour: 9, minute: 30, label: "Tuesday 9:30 AM" },   // Tue 9:30
+  { weekday: 4, hour: 18, minute: 0, label: "Thursday 6:00 PM" },  // Thu 6:00 PM
+];
+
+const TZ = "America/Los_Angeles";
+
 function json(ok: boolean, payload: any, status = 200) {
   return NextResponse.json({ ok, ...payload }, { status });
 }
 
-/**
- * Spring schedule:
- * - Tuesdays 9:30–11:00 AM PT
- * - Thursdays 6:00–7:30 PM PT
- *
- * We only need the START time here.
- */
-const TZ = "America/Los_Angeles";
-
-// 0=Sun ... 6=Sat
-const SCHEDULE = [
-  { dow: 2, hour: 9, minute: 30 },  // Tue 9:30 AM
-  { dow: 4, hour: 18, minute: 0 },  // Thu 6:00 PM
-];
-
-// Build a Date for the next occurrence of (dow, hour, minute) in America/Los_Angeles.
-// We do the math using the user's local timezone offset by formatting parts in TZ.
-function nextOccurrenceInTZ(now: Date, dow: number, hour: number, minute: number) {
-  // Get "today" in TZ (year/month/day + dow) using Intl parts
-  const parts = new Intl.DateTimeFormat("en-US", {
+// Get LA-local parts for a Date
+function getLaParts(d: Date) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone: TZ,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-    weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
-  }).formatToParts(now);
+    weekday: "short",
+  });
 
+  const parts = dtf.formatToParts(d);
   const get = (type: string) => parts.find((p) => p.type === type)?.value;
 
-  const y = Number(get("year"));
-  const m = Number(get("month"));
-  const d = Number(get("day"));
+  const weekday = get("weekday")!; // e.g., "Tue"
+  const year = Number(get("year"));
+  const month = Number(get("month"));
+  const day = Number(get("day"));
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
+  const second = Number(get("second"));
 
-  // Determine today's DOW in TZ
-  const weekday = get("weekday"); // e.g. "Tue"
+  return { weekday, year, month, day, hour, minute, second };
+}
+
+// Convert LA-local Y/M/D h:m into a real UTC Date that represents that instant.
+function laLocalToUtcDate(year: number, month: number, day: number, hour: number, minute: number) {
+  // Start with a naive UTC date for those components
+  const guessUtc = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+
+  // Figure out what LA thinks the time is at that UTC instant
+  const la = getLaParts(guessUtc);
+
+  // Compute minute delta between intended LA local time and actual LA local time of guessUtc
+  const intended = Date.UTC(year, month - 1, day, hour, minute, 0);
+  const actual = Date.UTC(la.year, la.month - 1, la.day, la.hour, la.minute, 0);
+
+  const diffMs = actual - intended;
+
+  // Adjust guess by that diff to land on the intended LA local instant
+  return new Date(guessUtc.getTime() - diffMs);
+}
+
+function weekdayShortToNum(w: string) {
+  // Sun=0..Sat=6
   const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const todayDow = weekday ? map[weekday] : now.getDay();
+  return map[w] ?? 0;
+}
 
-  // days until target dow
-  let delta = (dow - todayDow + 7) % 7;
-
-  // Candidate date in TZ: y-m-d + delta at target hour/minute
-  // We create a UTC date first, then interpret it as TZ via ISO tricks:
-  // Easiest reliable approach: construct a date string as if it's TZ, then convert by reading it as TZ parts.
-  // We'll approximate by starting from UTC midnight and adjusting via Intl "timeZoneName" is messy.
-  // Instead: generate a Date for the candidate in UTC and then validate ordering by formatting back into TZ.
-
-  const candidateUtc = new Date(Date.UTC(y, m - 1, d + delta, hour, minute, 0));
-
-  // If delta==0 but time already passed in TZ, bump 7 days
-  const nowTzHM = new Intl.DateTimeFormat("en-US", {
+function formatLaLabel(iso: string) {
+  const d = new Date(iso);
+  const label = d.toLocaleString("en-US", {
     timeZone: TZ,
-    hour: "2-digit",
+    weekday: "short",
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
     minute: "2-digit",
-    hour12: false,
-  }).format(now);
+  });
+  return `${label} (America/Los_Angeles)`;
+}
 
-  const [nowH, nowMin] = nowTzHM.split(":").map((n) => Number(n));
-  const passedToday = delta === 0 && (nowH > hour || (nowH === hour && nowMin >= minute));
-  if (passedToday) {
-    return new Date(Date.UTC(y, m - 1, d + 7, hour, minute, 0));
+function computeNextSessionStart(now = new Date()) {
+  // Current LA date parts
+  const laNow = getLaParts(now);
+  const nowWeekdayNum = weekdayShortToNum(laNow.weekday);
+
+  // Candidate sessions for each slot: next occurrence (including today if still upcoming)
+  const candidates: Date[] = [];
+
+  for (const slot of SLOTS) {
+    // how many days ahead until the slot weekday
+    let deltaDays = (slot.weekday - nowWeekdayNum + 7) % 7;
+
+    // If it’s the same weekday, only use “today” if the slot time is still in the future.
+    if (deltaDays === 0) {
+      const nowMinutes = laNow.hour * 60 + laNow.minute;
+      const slotMinutes = slot.hour * 60 + slot.minute;
+      if (slotMinutes <= nowMinutes) {
+        deltaDays = 7;
+      }
+    }
+
+    // Build LA-local date for the candidate day
+    const base = laLocalToUtcDate(laNow.year, laNow.month, laNow.day, 0, 0);
+    const candidateDayUtc = new Date(base.getTime() + deltaDays * 24 * 60 * 60 * 1000);
+
+    // Get LA-local Y/M/D for that candidate day, then set slot time
+    const laCandidate = getLaParts(candidateDayUtc);
+
+    const candidateStartUtc = laLocalToUtcDate(
+      laCandidate.year,
+      laCandidate.month,
+      laCandidate.day,
+      slot.hour,
+      slot.minute
+    );
+
+    candidates.push(candidateStartUtc);
   }
 
-  return candidateUtc;
+  candidates.sort((a, b) => a.getTime() - b.getTime());
+  const next = candidates[0];
+  return next.toISOString();
 }
 
 export async function GET() {
   try {
-    const now = new Date();
-
-    const candidates = SCHEDULE.map((s) => nextOccurrenceInTZ(now, s.dow, s.hour, s.minute));
-    candidates.sort((a, b) => a.getTime() - b.getTime());
-
-    const next = candidates[0];
-    return json(true, { sessionStart: next.toISOString() }, 200);
+    const sessionStart = computeNextSessionStart(new Date());
+    return json(true, {
+      sessionStart,
+      sessionLabel: formatLaLabel(sessionStart),
+    });
   } catch (e: any) {
-    return json(false, { error: e?.message || "failed" }, 500);
+    return json(false, { error: e?.message || "Failed to compute next session" }, 500);
   }
 }
