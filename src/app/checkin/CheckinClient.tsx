@@ -31,6 +31,7 @@ export default function CheckinClient() {
   // Permanent QR will usually have token only (no sessionStart).
   const [sessionStart, setSessionStart] = useState<string>(sp.get("sessionStart") ?? "");
   const [sessionLabel, setSessionLabel] = useState<string>("");
+  const [refreshing, setRefreshing] = useState(false);
 
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -39,23 +40,26 @@ export default function CheckinClient() {
   const missingToken = !token;
 
   async function loadNextSession() {
-    try {
-      const res = await fetch("/api/checkin/next-session", { cache: "no-store" });
-      const json = (await res.json().catch(() => null)) as NextSessionResp | null;
+  try {
+    setRefreshing(true);
 
-      if (!res.ok || !json || json.ok !== true || !json.sessionStart) {
-        setSessionStart("");
-        setSessionLabel("Unable to load session. Please ask the coordinator.");
-        return;
-      }
+    const res = await fetch("/api/checkin/next-session", { cache: "no-store" });
+    const json = (await res.json().catch(() => null)) as NextSessionResp | null;
 
-      // Single source of truth:
-      setSessionStart(json.sessionStart);
-    } catch {
+    if (!res.ok || !json || json.ok !== true || !json.sessionStart) {
       setSessionStart("");
       setSessionLabel("Unable to load session. Please ask the coordinator.");
+      return;
     }
+
+    setSessionStart(json.sessionStart);
+  } catch {
+    setSessionStart("");
+    setSessionLabel("Unable to load session. Please ask the coordinator.");
+  } finally {
+    setRefreshing(false);
   }
+}
 
   // If sessionStart isn't provided by URL (permanent QR), load next session automatically.
   useEffect(() => {
@@ -129,20 +133,20 @@ export default function CheckinClient() {
             {sessionLabel || "Loading…"}
           </div>
 
-          <button
-            type="button"
-            onClick={loadNextSession}
-            style={{
-              marginTop: 10,
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: "1px solid #e5e7eb",
-              background: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            Refresh session
-          </button>
+        <button
+  type="button"
+  onClick={loadNextSession}
+  style={{
+    marginTop: 10,
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    cursor: "pointer",
+  }}
+>
+  {refreshing ? "Refreshing..." : "Refresh session"}
+</button>
         </div>
       ) : null}
 
