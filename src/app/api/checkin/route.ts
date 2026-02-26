@@ -178,6 +178,12 @@ async function maybeSendMembershipOffer(opts: {
     <p>If you’d like to continue as a <strong>supporting member</strong>, choose a monthly plan below:</p>
 
     <ul>
+      <li>
+        <a href="${LINKS.oneSessionMembershipLink}">
+          <strong>$33/month — 1 session</strong>
+        </a>
+      </li>
+
      <li>
   <a href="${LINKS.fourSessionMembershipLink}">
     <strong>$66/month — 4 sessions</strong>
@@ -188,7 +194,7 @@ async function maybeSendMembershipOffer(opts: {
       Credits may be shared with family & friends.
     </li>
   </ul>
-  <p style="color:#94a3b8; font-size:13px; margin:6px 0 0 0;">
+  <p style="color:#64748b; font-size:13px; margin:6px 0 0 0;">
     Note: Member must attend the session with guest(s).
   </p>
 </li>
