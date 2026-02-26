@@ -53,6 +53,10 @@ const MEMBERSHIPS = {
   },
   supportEmail: "membership@happensbychance.com",
 };
+const LIVE_MEMBERSHIP_PRICE_IDS = new Set<string>([
+  "price_1SmLOG74RZAQay6eQEa7jhOF", // $33 membership (1 session)
+  "price_1SmLQH74RZAQay6ey4DRzjZb", // $66 membership (4 sessions)
+]);
 
 async function alreadyProcessed(eventId: string) {
   const { data } = await supabaseAdmin
@@ -342,6 +346,7 @@ export async function POST(req: Request) {
 
       await upsertPayerPurchase({ payerId, memberId, session });
 
+
       // Credit grant (idempotent by session id in reason)
 const alreadyGranted = await creditGrantExistsForSession(memberId, session.id);
 
@@ -482,6 +487,157 @@ if (!alreadyGranted) {
 
       if (credits > 0) {
         const memberId = await getOrCreateMemberByEmail({ email });
+
+// -----------------------------
+// MEMBERSHIP STATUS (LIVE) — set active subscriber on successful renewal
+// -----------------------------
+
+let plan: "one_session" | "four_session" | null = null;
+
+for (const line of (fullInvoice.lines?.data ?? []) as any[]) {
+  const priceId =
+    line?.price?.id ||
+    line?.pricing?.price_details?.price ||
+    line?.pricing?.price_details?.price?.id ||
+    line?.plan?.id ||
+    line?.plan;
+
+  const pid = priceId ? String(priceId) : "";
+  if (LIVE_MEMBERSHIP_PRICE_IDS.has(pid)) {
+    plan = pid === "price_1SmLQH74RZAQay6ey4DRzjZb" ? "four_session" : "one_session";
+    break;
+  }
+}
+
+// Mark membership active + store subscription identifiers when available
+if (plan) {
+  const nowIso = new Date().toISOString();
+
+  // Stripe identifiers (best-effort)
+  const stripeCustomerId =
+    typeof fullInvoice.customer === "string"
+      ? fullInvoice.customer
+      : ((fullInvoice.customer as any)?.id ?? null);
+
+  const stripeSubscriptionId =
+    typeof (fullInvoice as any)?.subscription === "string"
+      ? (fullInvoice as any).subscription
+      : ((fullInvoice as any)?.subscription?.id ?? null);
+
+  // Active-until: use invoice line period end if present (best-effort)
+  let activeUntil: string | null = null;
+  try {
+    const firstLine: any = (fullInvoice.lines?.data ?? [])[0];
+    const periodEndSec =
+      firstLine?.period?.end ??
+      (fullInvoice as any)?.lines?.data?.[0]?.period?.end ??
+      null;
+
+    if (typeof periodEndSec === "number" && periodEndSec > 0) {
+      activeUntil = new Date(periodEndSec * 1000).toISOString();
+    }
+  } catch {
+    // ignore
+  }
+
+  const { error: memUpdErr } = await supabaseAdmin
+    .from("members")
+    .update({
+      membership_active: true,
+      membership_plan: plan,
+      membership_last_invoice_id: fullInvoice.id,
+      membership_last_paid_at: nowIso,
+      membership_active_until: activeUntil,
+      stripe_customer_id: stripeCustomerId,
+      stripe_subscription_id: stripeSubscriptionId,
+      updated_at: nowIso,
+    })
+    .eq("id", memberId);
+
+  if (memUpdErr) {
+    console.error("[stripe] failed updating members membership fields", memUpdErr.message);
+  }
+}
+
+// ---- MEMBERSHIP STATE (subscriptions via invoice.payment_succeeded) ----
+let membershipPlan: "one_session" | "four_session" | null = null;
+
+for (const line of (fullInvoice.lines?.data ?? []) as any[]) {
+  const priceId =
+    line?.price?.id ||
+    line?.pricing?.price_details?.price ||
+    line?.pricing?.price_details?.price?.id ||
+    line?.plan?.id ||
+    line?.plan;
+
+  const pid = priceId ? String(priceId) : "";
+  if (LIVE_MEMBERSHIP_PRICE_IDS.has(pid)) {
+    membershipPlan = pid === "price_1SmLQH74RZAQay6ey4DRzjZb" ? "four_session" : "one_session";
+    break;
+  }
+}
+
+if (membershipPlan) {
+  const nowIso = new Date().toISOString();
+
+  const stripeCustomerId =
+    typeof fullInvoice.customer === "string"
+      ? fullInvoice.customer
+      : ((fullInvoice.customer as any)?.id ?? null);
+
+  const stripeSubscriptionId =
+    typeof (fullInvoice as any)?.subscription === "string"
+      ? String((fullInvoice as any).subscription)
+      : ((fullInvoice as any)?.subscription?.id ?? null);
+
+  // best signal for "active until"
+  let activeUntilIso: string | null = null;
+
+  if (stripeSubscriptionId) {
+  try {
+    const subRes = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+    const sub: any = (subRes as any)?.data ?? subRes; // unwrap if SDK returns Response<{data: ...}>
+    const cpe = sub?.current_period_end ?? null;
+
+    if (typeof cpe === "number" && cpe > 0) {
+      activeUntilIso = new Date(cpe * 1000).toISOString();
+    }
+  } catch (e: any) {
+    console.warn("[stripe] failed to retrieve subscription for active-until", e?.message);
+  }
+}
+
+  // fallback: invoice line period end
+  if (!activeUntilIso) {
+    try {
+      const firstLine: any = (fullInvoice.lines?.data ?? [])[0];
+      const periodEndSec = firstLine?.period?.end ?? null;
+      if (typeof periodEndSec === "number" && periodEndSec > 0) {
+        activeUntilIso = new Date(periodEndSec * 1000).toISOString();
+      }
+    } catch {}
+  }
+
+  const { error: memUpdErr } = await supabaseAdmin
+    .from("members")
+    .update({
+      membership_active: true,
+      membership_plan: membershipPlan,
+      membership_last_invoice_id: fullInvoice.id,
+      membership_last_paid_at: nowIso,
+      membership_active_until: activeUntilIso,
+      stripe_customer_id: stripeCustomerId,
+      stripe_subscription_id: stripeSubscriptionId,
+      updated_at: nowIso,
+    })
+    .eq("id", memberId);
+
+  if (memUpdErr) {
+    console.error("[stripe] failed updating members membership fields", memUpdErr.message);
+  }
+}
+// ---- END MEMBERSHIP STATE ----
+
 // ---- PAYER TRACKING (subscriptions via invoice) ----
   // Prefer Stripe customer id; invoice.customer can be string id or expanded object.
   const stripeCustomerId =

@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
  *   - If still not signed, emails instant signing link (via SignNow link + your mailer), with cooldown
  * - If no RSVP: sends $45 purchase link email + records denied checkin row
  * - If approved: records checkins row entry_approved=true, waiver_verified=true
- * - After successful check-in: sends a membership offer email (only once per member, guarded)
+ * - After successful check-in: sends a membership offer email to non-subscribing members
  */
 
 const LINKS = {
@@ -125,14 +125,21 @@ async function sendEmail(to: string, subject: string, html: string) {
 async function maybeSendMembershipOffer(opts: {
   supabase: ReturnType<typeof createSupabaseAdminClient>;
   memberId: string;
+  rsvpInviteeEmail: string | null;
   rsvpInviteeName?: string | null;
+  isMinor?: boolean | null;
 }) {
-  const { supabase, memberId, rsvpInviteeName } = opts;
+  const { supabase, memberId, rsvpInviteeEmail, rsvpInviteeName, isMinor } = opts;
 
-  // 1) Resolve member email (send to payer, not guest email)
+  // Never send to minors (guests)
+  if (isMinor === true) {
+    return { attempted: false, sent: false, reason: "minor_guest" as const };
+  }
+
+  // Load member record
   const { data: mRow, error: mErr } = await supabase
     .from("members")
-    .select("email,first_name,last_name")
+    .select("email,first_name,last_name,membership_active,membership_offer_last_sent_at")
     .eq("id", memberId)
     .maybeSingle();
 
@@ -144,73 +151,59 @@ async function maybeSendMembershipOffer(opts: {
   const memberEmail = mRow?.email ? normEmail(String(mRow.email)) : null;
   if (!memberEmail) return { attempted: false, sent: false, reason: "member_missing_email" as const };
 
-  // 2) Only send if member currently has no credits (simple + conservative)
-  const { data: balRow, error: balErr } = await supabase
-    .from("v_member_credit_balance")
-    .select("member_id,balance")
-    .eq("member_id", memberId)
-    .maybeSingle();
-
-  if (balErr) {
-    console.warn("[checkin] membership-offer: balance lookup error", balErr.message);
-    return { attempted: false, sent: false, reason: "balance_lookup_failed" as const };
+  // If this RSVP is for a guest (invitee email != member email), do not send membership offer.
+  const inviteeEmailNorm = rsvpInviteeEmail ? normEmail(String(rsvpInviteeEmail)) : null;
+  if (!inviteeEmailNorm || inviteeEmailNorm !== memberEmail) {
+    return { attempted: false, sent: false, reason: "guest_rsvp" as const };
   }
 
-  const balance = Number((balRow as any)?.balance ?? 0);
-  if (balance > 0) {
-    return { attempted: false, sent: false, reason: "has_credits" as const };
-  }
-
-  // 3) Guard: send only on the FIRST approved check-in we ever see for this member
-  // (prevents spamming; if you ever want a “once per 30 days” rule, we can change it later)
-  const { count: approvedCount, error: cErr } = await supabase
-    .from("checkins")
-    .select("id", { count: "exact", head: true })
-    .eq("member_id", memberId)
-    .eq("entry_approved", true);
-
-  if (cErr) {
-    console.warn("[checkin] membership-offer: count lookup error", cErr.message);
-    return { attempted: false, sent: false, reason: "count_lookup_failed" as const };
-  }
-
-  // If they've already had an approved check-in before this one, skip.
-  // IMPORTANT: this function should be called AFTER the approved check-in insert,
-  // so “first ever” means approvedCount === 1.
-  if ((approvedCount ?? 0) !== 1) {
-    return { attempted: false, sent: false, reason: "not_first_checkin" as const };
+  // If they are an active subscriber, do not send.
+  if ((mRow as any)?.membership_active === true) {
+    return { attempted: false, sent: false, reason: "active_subscriber" as const };
   }
 
   const firstName =
-    String(mRow?.first_name ?? "").trim() ||
+    String((mRow as any)?.first_name ?? "").trim() ||
     String(rsvpInviteeName ?? "").trim().split(" ")[0] ||
     "there";
 
   const emailRes = await sendEmail(
     memberEmail,
-    "Unlock member pricing for your next session — Happens By Chance",
+    "Member pricing — choose your monthly plan",
     `
       <p>Hi ${firstName},</p>
 
-      <p>You’re checked in — welcome. If you’d like to make future sessions simpler (and less expensive), you can unlock member pricing now:</p>
+      <p>You’re checked in — welcome.</p>
+
+      <p>If you’d like to continue as a <strong>member</strong>, choose a monthly plan below:</p>
 
       <ul>
         <li>
-          <a href="${LINKS.oneSessionMembershipLink}"><strong>Monthly 1-credit membership</strong></a>
-          <span style="color:#64748b;"> (one session per month)</span>
+          <a href="${LINKS.oneSessionMembershipLink}"><strong>$33/month — 1 session</strong></a>
         </li>
         <li>
-          <a href="${LINKS.fourSessionMembershipLink}"><strong>Monthly 4-credit membership</strong></a>
+          <a href="${LINKS.fourSessionMembershipLink}"><strong>$66/month — 4 sessions</strong></a>
           <span style="color:#64748b;"> (best value if you plan to come weekly)</span>
         </li>
       </ul>
 
       <p style="color:#64748b;">
-        Questions? Reply to this email or reach us at
+        Questions? Email
         <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
       </p>
     `
   );
+
+  // Store last sent (for audit/future logic; not used as a cooldown)
+  try {
+    const nowIso = new Date().toISOString();
+    await supabase
+      .from("members")
+      .update({ membership_offer_last_sent_at: nowIso, updated_at: nowIso })
+      .eq("id", memberId);
+  } catch (e: any) {
+    console.warn("[checkin] membership-offer: failed to update last_sent", e?.message);
+  }
 
   return { attempted: true, sent: emailRes?.ok ?? false, reason: "sent_or_failed" as const };
 }
@@ -270,7 +263,7 @@ export async function POST(req: Request) {
 
   const { data: rsvp, error: rsvpErr } = await supabase
     .from("rsvps")
-    .select("id, member_id, invitee_email, invitee_name, event_start_at, status, redeemed_ledger_id")
+    .select("id, member_id, invitee_email, invitee_name, is_minor, event_start_at, status, redeemed_ledger_id")
     .eq("invitee_email", email)
     .eq("status", "booked")
     .gte("event_start_at", startWindowIso)
@@ -535,10 +528,12 @@ export async function POST(req: Request) {
   // Membership offer (best-effort, never blocks check-in)
   try {
     const offerRes = await maybeSendMembershipOffer({
-      supabase,
-      memberId: rsvp.member_id,
-      rsvpInviteeName: rsvp.invitee_name ?? null,
-    });
+  supabase,
+  memberId: rsvp.member_id,
+  rsvpInviteeEmail: rsvp.invitee_email ?? null,
+  rsvpInviteeName: rsvp.invitee_name ?? null,
+  isMinor: (rsvp as any).is_minor ?? null,
+});
     console.log("[checkin] membership-offer", { memberId: rsvp.member_id, ...offerRes });
   } catch (e: any) {
     console.warn("[checkin] membership-offer failed", e?.message);
