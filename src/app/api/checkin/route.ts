@@ -261,7 +261,7 @@ export async function POST(req: Request) {
   const startWindowIso = new Date(sessionStartMs - 6 * 60 * 60 * 1000).toISOString();
   const endWindowIso = new Date(sessionStartMs + 6 * 60 * 60 * 1000).toISOString();
 
-  const { data: rsvp, error: rsvpErr } = await supabase
+  const { data: rsvps, error: rsvpErr } = await supabase
     .from("rsvps")
     .select("id, member_id, invitee_email, invitee_name, is_minor, event_start_at, status, redeemed_ledger_id")
     .eq("invitee_email", email)
@@ -269,13 +269,21 @@ export async function POST(req: Request) {
     .gte("event_start_at", startWindowIso)
     .lte("event_start_at", endWindowIso)
     .order("event_start_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(10);
 
   if (rsvpErr) {
     console.error("[checkin] rsvp lookup error", rsvpErr.message);
     return json(false, { error: rsvpErr.message }, 500);
   }
+
+  const rsvp =
+    (rsvps ?? [])
+      .filter((x: any) => x?.event_start_at)
+      .sort((a: any, b: any) => {
+        const da = Math.abs(Date.parse(a.event_start_at) - sessionStartMs);
+        const db = Math.abs(Date.parse(b.event_start_at) - sessionStartMs);
+        return da - db;
+      })[0] ?? null;
 
   // No RSVP
   if (!rsvp?.id) {
