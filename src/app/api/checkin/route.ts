@@ -178,21 +178,20 @@ async function maybeSendMembershipOffer(opts: {
     <p>If you’d like to continue as a <strong>supporting member</strong>, choose a monthly plan below:</p>
 
     <ul>
-      <li>
-        <a href="${LINKS.oneSessionMembershipLink}">
-          <strong>$33/month — 1 session</strong>
-        </a>
-      </li>
-
-      <li>
-        <a href="${LINKS.fourSessionMembershipLink}">
-          <strong>$66/month — 4 sessions</strong>
-        </a>
-        <span style="color:#64748b;"> (best value if you plan to come weekly)</span>
-        <ul style="margin-top:6px;">
-          <li style="color:#64748b;">
-            Credits may be shared with family & friends.
-          </li>
+     <li>
+  <a href="${LINKS.fourSessionMembershipLink}">
+    <strong>$66/month — 4 sessions</strong>
+  </a>
+  <span style="color:#64748b;"> (best value if you plan to come weekly)</span>
+  <ul style="margin-top:6px;">
+    <li style="color:#64748b;">
+      Credits may be shared with family & friends.
+    </li>
+  </ul>
+  <p style="color:#94a3b8; font-size:13px; margin:6px 0 0 0;">
+    Note: Member must attend the session with guest(s).
+  </p>
+</li>
         </ul>
       </li>
     </ul>
