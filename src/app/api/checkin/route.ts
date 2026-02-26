@@ -168,31 +168,41 @@ async function maybeSendMembershipOffer(opts: {
     "there";
 
   const emailRes = await sendEmail(
-    memberEmail,
-    "Member pricing — choose your monthly plan",
-    `
-      <p>Hi ${firstName},</p>
+  memberEmail,
+  "Membership Pricing — Choose Your Monthly Plan",
+  `
+    <p>Hi ${firstName},</p>
 
-      <p>You’re checked in — welcome.</p>
+    <p>Your check-in has unlocked your membership offers!</p>
 
-      <p>If you’d like to continue as a <strong>member</strong>, choose a monthly plan below:</p>
+    <p>If you’d like to continue as a <strong>supporting member</strong>, choose a monthly plan below:</p>
 
-      <ul>
-        <li>
-          <a href="${LINKS.oneSessionMembershipLink}"><strong>$33/month — 1 session</strong></a>
-        </li>
-        <li>
-          <a href="${LINKS.fourSessionMembershipLink}"><strong>$66/month — 4 sessions</strong></a>
-          <span style="color:#64748b;"> (best value if you plan to come weekly)</span>
-        </li>
-      </ul>
+    <ul>
+      <li>
+        <a href="${LINKS.oneSessionMembershipLink}">
+          <strong>$33/month — 1 session</strong>
+        </a>
+      </li>
 
-      <p style="color:#64748b;">
-        Questions? Email
-        <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
-      </p>
-    `
-  );
+      <li>
+        <a href="${LINKS.fourSessionMembershipLink}">
+          <strong>$66/month — 4 sessions</strong>
+        </a>
+        <span style="color:#64748b;"> (best value if you plan to come weekly)</span>
+        <ul style="margin-top:6px;">
+          <li style="color:#64748b;">
+            Credits may be shared with family & friends.
+          </li>
+        </ul>
+      </li>
+    </ul>
+
+    <p style="color:#64748b;">
+      Questions? Email
+      <a href="mailto:${LINKS.supportEmail}">${LINKS.supportEmail}</a>.
+    </p>
+  `
+);
 
   // Store last sent (for audit/future logic; not used as a cooldown)
   try {
