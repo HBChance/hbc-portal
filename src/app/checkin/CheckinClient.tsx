@@ -8,7 +8,7 @@ type ApiResp =
   | { ok: true; approved: false; status?: string; message?: string; opensAt?: string; closesAt?: string }
   | { ok: false; error: string; message?: string };
 
-type NextSessionResp =
+type SessionResp =
   | { ok: true; sessionStart: string }
   | { ok: false; error: string };
 
@@ -39,12 +39,14 @@ export default function CheckinClient() {
 
   const missingToken = !token;
 
-  async function loadNextSession() {
+  async function loadCurrentSession() {
   try {
     setRefreshing(true);
 
-    const res = await fetch("/api/checkin/next-session", { cache: "no-store" });
-    const json = (await res.json().catch(() => null)) as NextSessionResp | null;
+    // IMPORTANT: this endpoint should return the "active" session if one is within the check-in window,
+    // otherwise return the next upcoming session.
+    const res = await fetch("/api/checkin/current-session", { cache: "no-store" });
+    const json = (await res.json().catch(() => null)) as SessionResp | null;
 
     if (!res.ok || !json || json.ok !== true || !json.sessionStart) {
       setSessionStart("");
@@ -63,7 +65,7 @@ export default function CheckinClient() {
 
   // If sessionStart isn't provided by URL (permanent QR), load next session automatically.
   useEffect(() => {
-    if (!sessionStart) loadNextSession();
+    if (!sessionStart) loadCurrentSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -135,7 +137,7 @@ export default function CheckinClient() {
 
         <button
   type="button"
-  onClick={loadNextSession}
+  onClick={loadCurrentSession}
   style={{
     marginTop: 10,
     padding: "8px 12px",

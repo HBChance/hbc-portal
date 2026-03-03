@@ -291,14 +291,32 @@ export async function POST(req: Request) {
     return json(false, { error: rsvpErr.message }, 500);
   }
 
+    // Check-in window rules
+  const CHECKIN_OPENS_MINUTES = 60;
+  const CHECKIN_CLOSES_MINUTES = 150; // <-- stays live until +150 min after start
+
+  const candidates = (rsvps ?? []).filter((x: any) => x?.event_start_at);
+
+  // Prefer the RSVP whose check-in window contains "now"
+  const active = candidates.filter((x: any) => {
+    const startMs = Date.parse(x.event_start_at);
+    if (!Number.isFinite(startMs)) return false;
+
+    const opensAtMs = startMs - CHECKIN_OPENS_MINUTES * 60 * 1000;
+    const closesAtMs = startMs + CHECKIN_CLOSES_MINUTES * 60 * 1000;
+
+    return nowMs >= opensAtMs && nowMs <= closesAtMs;
+  });
+
   const rsvp =
-    (rsvps ?? [])
-      .filter((x: any) => x?.event_start_at)
-      .sort((a: any, b: any) => {
-        const da = Math.abs(Date.parse(a.event_start_at) - sessionStartMs);
-        const db = Math.abs(Date.parse(b.event_start_at) - sessionStartMs);
-        return da - db;
-      })[0] ?? null;
+    (active.length > 0
+      ? active.sort((a: any, b: any) => Date.parse(a.event_start_at) - Date.parse(b.event_start_at))[0]
+      : candidates
+          .sort((a: any, b: any) => {
+            const da = Math.abs(Date.parse(a.event_start_at) - sessionStartMs);
+            const db = Math.abs(Date.parse(b.event_start_at) - sessionStartMs);
+            return da - db;
+          })[0]) ?? null;
 
   // No RSVP
   if (!rsvp?.id) {
@@ -343,9 +361,10 @@ export async function POST(req: Request) {
   const eventStartIso = rsvp.event_start_at ? new Date(rsvp.event_start_at).toISOString() : sessionStartIso;
   const eventStartMs = Date.parse(eventStartIso);
 
-  // allowed from 60 min before until 90 min after
-  const opensAtMs = eventStartMs - 60 * 60 * 1000;
-  const closesAtMs = eventStartMs + 90 * 60 * 1000;
+    // allowed from 60 min before until 150 min after
+  
+    const opensAtMs = eventStartMs - CHECKIN_OPENS_MINUTES * 60 * 1000;
+  const closesAtMs = eventStartMs + CHECKIN_CLOSES_MINUTES * 60 * 1000;
 
   if (nowMs < opensAtMs) {
     return json(true, {
@@ -360,7 +379,7 @@ export async function POST(req: Request) {
     return json(true, {
       approved: false,
       status: "check-in closed",
-      message: "Check-in is closed for this session (90 minutes after start). Please speak with the session coordinator.",
+      message: "Check-in is closed for this session (150 minutes after start). Please speak with the session coordinator.",
       closesAt: new Date(closesAtMs).toISOString(),
     });
   }

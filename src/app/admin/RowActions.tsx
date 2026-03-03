@@ -13,7 +13,7 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | null;
+  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | "manualcheckin" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -223,6 +223,50 @@ console.log("[waiver-check] response", out);
   title="Mark a specific RSVP as a no-show (only allowed after check-in closes)"
 >
   {busy === "noshow" ? "Marking…" : "Mark no-show"}
+</button>
+<button
+  type="button"
+  disabled={busy !== null}
+  onClick={async () => {
+    setMsg(null);
+
+    const inviteeEmail = window.prompt(
+      "Enter attendee email to manually check in:",
+      (email ?? "").trim()
+    );
+    if (!inviteeEmail) return;
+
+    const sessionStart = window.prompt(
+      "Optional: paste sessionStart ISO (leave blank to auto-pick current session):",
+      ""
+    );
+
+    setBusy("manualcheckin");
+    try {
+     await postJson("/api/admin/checkin/manual", {
+  email: inviteeEmail.trim(),
+  sessionStart: sessionStart?.trim() ? sessionStart.trim() : null,
+});
+      setMsg("Checked in");
+      window.location.reload();
+    } catch (e: any) {
+      setMsg(e?.message || "Failed");
+    } finally {
+      setBusy(null);
+    }
+  }}
+  style={{
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "6px 10px",
+    fontSize: 12,
+    background: "white",
+    opacity: busy !== null ? 0.5 : 1,
+    cursor: busy !== null ? "not-allowed" : "pointer",
+  }}
+  title="Manually check in an attendee (uses current session window if sessionStart is blank)"
+>
+  {busy === "manualcheckin" ? "Checking…" : "Manual check-in"}
 </button>
       {msg ? <span style={{ fontSize: 12, color: "#64748b" }}>{msg}</span> : null}
     </div>
