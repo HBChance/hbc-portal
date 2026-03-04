@@ -25,7 +25,8 @@ const [busy, setBusy] = useState<Busy>(null);
     });
 
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+        if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+    if (data && data.ok === false) throw new Error(data?.error || "Request failed");
     return data;
   }
 
