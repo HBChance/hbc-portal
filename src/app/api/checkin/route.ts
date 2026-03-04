@@ -103,7 +103,7 @@ async function sendEmail(to: string, subject: string, html: string) {
     return { ok: false, error: "CRON_INVOKE_KEY missing" };
   }
 
-  const res = await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass", {
+  const res = await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-membership-offer", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
