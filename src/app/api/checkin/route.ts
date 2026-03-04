@@ -128,6 +128,8 @@ async function maybeSendMembershipOffer(opts: {
   rsvpInviteeEmail: string | null;
   rsvpInviteeName?: string | null;
   isMinor?: boolean | null;
+  rsvpId?: string | null;
+  sessionStart?: string | null;
 }) {
   const { supabase, memberId, rsvpInviteeEmail, rsvpInviteeName, isMinor } = opts;
 
@@ -208,7 +210,20 @@ async function maybeSendMembershipOffer(opts: {
     </p>
   `
 );
-
+  // Log the offer in membership_offers only if email actually sent
+  if (emailRes?.ok) {
+    try {
+      await supabase.from("membership_offers").insert({
+        member_id: memberId,
+        rsvp_id: opts.rsvpId ?? null,
+        session_start: opts.sessionStart ?? null,
+        offer_type: "post_checkin",
+        sent_at: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.warn("[checkin] membership-offer: failed to insert membership_offers row", e?.message);
+    }
+  }
   // Store last sent (for audit/future logic; not used as a cooldown)
   try {
     const nowIso = new Date().toISOString();
@@ -575,6 +590,8 @@ export async function POST(req: Request) {
   rsvpInviteeEmail: rsvp.invitee_email ?? null,
   rsvpInviteeName: rsvp.invitee_name ?? null,
   isMinor: (rsvp as any).is_minor ?? null,
+  rsvpId: rsvp.id,
+  sessionStart: eventStartIso,
 });
     console.log("[checkin] membership-offer", { memberId: rsvp.member_id, ...offerRes });
   } catch (e: any) {
