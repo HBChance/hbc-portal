@@ -403,3 +403,14 @@ entrypoint = "./functions/redeem-booking-pass/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/redeem-booking-pass/*.html" ]
 
+
+[functions.send-membership-offer]
+enabled = true
+verify_jwt = true
+import_map = "./functions/send-membership-offer/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/send-membership-offer/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/send-membership-offer/*.html" ]

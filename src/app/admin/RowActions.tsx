@@ -13,7 +13,7 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | "manualcheckin" | null;
+  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | "manualcheckin" | "offer" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -268,6 +268,35 @@ console.log("[waiver-check] response", out);
   title="Manually check in an attendee (uses current session window if sessionStart is blank)"
 >
   {busy === "manualcheckin" ? "Checking…" : "Manual check-in"}
+</button>
+<button
+  type="button"
+  disabled={!email || busy !== null}
+  onClick={async () => {
+    setMsg(null);
+    setBusy("offer");
+    try {
+      await postJson("/api/admin/membership-offer/send", { member_id: memberId });
+      setMsg("Membership offer sent");
+      window.location.reload();
+    } catch (e: any) {
+      setMsg(e?.message || "Failed");
+    } finally {
+      setBusy(null);
+    }
+  }}
+  style={{
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "6px 10px",
+    fontSize: 12,
+    background: "white",
+    opacity: busy !== null || !email ? 0.5 : 1,
+    cursor: busy !== null || !email ? "not-allowed" : "pointer",
+  }}
+  title={!email ? "Missing email" : "Send membership offer email ($33 / $66)"}
+>
+  {busy === "offer" ? "Sending…" : "Send membership offer"}
 </button>
       {msg ? <span style={{ fontSize: 12, color: "#64748b" }}>{msg}</span> : null}
     </div>
