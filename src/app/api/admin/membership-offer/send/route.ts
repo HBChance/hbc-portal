@@ -116,13 +116,24 @@ export async function POST(req: Request) {
     }
 
     // ---- Update last-sent timestamp
-    const now = new Date().toISOString();
+       const now = new Date().toISOString();
     const { error: updErr } = await admin
       .from("members")
       .update({ membership_offer_last_sent_at: now })
       .eq("id", memberRow.id);
 
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+
+    // ---- Log to membership_offers
+    const { error: logErr } = await admin.from("membership_offers").insert({
+      member_id: memberRow.id,
+      rsvp_id: null,
+      session_start: null,
+      offer_type: "admin_manual",
+      sent_at: now,
+    });
+
+    if (logErr) return NextResponse.json({ error: logErr.message }, { status: 500 });
 
     return NextResponse.json({ ok: true });
   } catch (err: any) {

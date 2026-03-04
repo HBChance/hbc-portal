@@ -103,7 +103,7 @@ async function sendEmail(to: string, subject: string, html: string) {
     return { ok: false, error: "CRON_INVOKE_KEY missing" };
   }
 
-  const res = await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-membership-offer", {
+  const res = await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -119,6 +119,31 @@ async function sendEmail(to: string, subject: string, html: string) {
   }
 
   console.log("[checkin] sendEmail ok", { to, subject });
+  return { ok: true };
+}
+async function sendMembershipOfferEmail(to: string, subject: string, html: string) {
+  const cronKey = process.env.CRON_INVOKE_KEY;
+  if (!cronKey) {
+    console.error("[checkin] CRON_INVOKE_KEY missing; membership offer email not sent", { to, subject });
+    return { ok: false, error: "CRON_INVOKE_KEY missing" };
+  }
+
+  const res = await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-membership-offer", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-cron-key": cronKey,
+    },
+    body: JSON.stringify({ to, subject, html }),
+  });
+
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    console.error("[checkin] sendMembershipOfferEmail failed", { status: res.status, text });
+    return { ok: false, error: `membership_offer_mailer_failed_${res.status}` };
+  }
+
+  console.log("[checkin] sendMembershipOfferEmail ok", { to, subject });
   return { ok: true };
 }
 
@@ -169,7 +194,7 @@ async function maybeSendMembershipOffer(opts: {
     String(rsvpInviteeName ?? "").trim().split(" ")[0] ||
     "there";
 
-  const emailRes = await sendEmail(
+  const emailRes = await sendMembershipOfferEmail(
   memberEmail,
   "Membership Pricing — Choose Your Monthly Plan",
   `
