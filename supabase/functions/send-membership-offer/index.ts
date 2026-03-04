@@ -18,11 +18,12 @@ serve(async (req) => {
     if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
     // Auth: same pattern as your other functions (CRON_INVOKE_KEY header)
-    const cronKey = req.headers.get("x-cron-key");
-    const expected = Deno.env.get("CRON_INVOKE_KEY");
-    if (!expected) return json(500, { error: "Missing CRON_INVOKE_KEY" });
-    if (!cronKey || cronKey !== expected) return json(401, { error: "Unauthorized" });
+const cronKey = req.headers.get("x-cron-key");
+const expected = Deno.env.get("CRON_INVOKE_KEY");
 
+if (!expected) return json(500, { error: "Missing CRON_INVOKE_KEY" });
+if (!cronKey || cronKey !== expected) return json(401, { error: "Unauthorized" });
+}
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!resendKey) return json(500, { error: "Missing RESEND_API_KEY" });
 
