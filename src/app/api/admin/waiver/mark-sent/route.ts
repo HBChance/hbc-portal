@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
-import { signNowCopyTemplateToDocument, signNowSendDocumentInvite } from "@/lib/signnow";
+import { signNowCopyTemplateToDocument, signNowCreateSigningLink } from "@/lib/signnow";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 
 const WAIVER_YEAR = 2026;
@@ -64,8 +64,6 @@ export async function POST(req: Request) {
 
   // Send signNow invite(s) for each missing doc
   const templateId = mustGetEnv("SIGNNOW_WAIVER_TEMPLATE_ID");
-  const fromEmail = mustGetEnv("SIGNNOW_FROM_EMAIL");
-  const roleName = mustGetEnv("SIGNNOW_WAIVER_ROLE_NAME") || "Participant";
 
   let sentCount = 0;
   const errors: Array<{ waiver_id: string; error: string }> = [];
@@ -88,14 +86,38 @@ export async function POST(req: Request) {
 
       const documentId = copy.document_id;
 
-      await signNowSendDocumentInvite({
-        documentId,
-        fromEmail,
-        toEmail: recipient_email, // <-- per your preference: member receives all waivers
-        subject,
-        message,
-        roleName,
-        expirationDays: 30,
+      const link = await signNowCreateSigningLink({ documentId });
+      const signingUrl =
+        String((link as any)?.url_no_signup ?? (link as any)?.url ?? "").trim();
+
+      if (!signingUrl) {
+        throw new Error("Could not generate browser signing link");
+      }
+
+      const cronKey = mustGetEnv("CRON_INVOKE_KEY");
+
+      const html = `
+        <p>Hello${recipient_name ? ` ${recipient_name}` : ""},</p>
+        <p>Please sign the annual waiver for ${WAIVER_YEAR}.</p>
+        <p><strong>Participant:</strong> ${who}</p>
+        <p>
+          <a href="${signingUrl}"><strong>Sign waiver now</strong></a>
+        </p>
+        <p>This link is intended to open directly in your browser.</p>
+        <p>— Happens By Chance Health & Wellness</p>
+      `;
+
+      await fetch("https://vffglvixaokvtdrdpvtd.functions.supabase.co/send-booking-pass", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-cron-key": cronKey,
+        },
+        body: JSON.stringify({
+          to: recipient_email,
+          subject,
+          html,
+        }),
       });
 
       const nowIso = new Date().toISOString();
