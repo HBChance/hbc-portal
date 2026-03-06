@@ -520,7 +520,7 @@ export async function POST(req: Request) {
     const recentlyReminded = (recentDeniedCount ?? 0) > 0;
 
     let waiverEmailSent = false;
-
+    let signingUrlForUi: string | null = null;
     if (!recentlyReminded) {
       const { data: anyWaiverRow } = await supabase
         .from("waivers")
@@ -539,7 +539,9 @@ export async function POST(req: Request) {
           const linkRes = await signNow.signNowCreateSigningLink({ documentId: docId });
           const signingUrl = linkRes?.url || linkRes?.link || linkRes?.data?.url || linkRes?.data?.link || null;
 
-          if (signingUrl) {
+                    if (signingUrl) {
+            signingUrlForUi = signingUrl;
+
             const emailRes = await sendEmail(
               email,
               `Waiver required to check in (${waiverYear}) — Happens By Chance`,
@@ -580,13 +582,14 @@ export async function POST(req: Request) {
       entry_approved: false,
       denied_reason: "WAIVER_NOT_SIGNED",
     });
-
-    return json(true, {
+       return json(true, {
       approved: false,
+      waiver_required: true,
       status: "check-in delayed — waiver not signed",
       message:
-        "Check-in delayed — waiver is not confirmed signed. We emailed your waiver link. If you believe you have already signed, please speak with the session coordinator.",
+        "Waiver required before check-in. Please sign your waiver now, then return here and press Check In again.",
       waiver_email_sent: waiverEmailSent,
+      waiver_signing_url: signingUrlForUi ?? null,
     });
   }
 

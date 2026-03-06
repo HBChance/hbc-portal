@@ -5,9 +5,18 @@ import { useEffect, useMemo, useState } from "react";
 
 type ApiResp =
   | { ok: true; approved: true; status?: string; message?: string }
-  | { ok: true; approved: false; status?: string; message?: string; opensAt?: string; closesAt?: string }
+  | {
+      ok: true;
+      approved: false;
+      status?: string;
+      message?: string;
+      opensAt?: string;
+      closesAt?: string;
+      waiver_required?: boolean;
+      waiver_email_sent?: boolean;
+      waiver_signing_url?: string | null;
+    }
   | { ok: false; error: string; message?: string };
-
 type SessionResp =
   | { ok: true; sessionStart: string }
   | { ok: false; error: string };
@@ -36,7 +45,8 @@ export default function CheckinClient() {
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [msg, setMsg] = useState<string>("");
-
+  const [waiverRequired, setWaiverRequired] = useState(false);
+  const [waiverSigningUrl, setWaiverSigningUrl] = useState<string>("");
   const missingToken = !token;
 
   async function loadCurrentSession() {
@@ -86,8 +96,10 @@ export default function CheckinClient() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setState("loading");
+        setState("loading");
     setMsg("");
+    setWaiverRequired(false);
+    setWaiverSigningUrl("");
 
     try {
       const res = await fetch(`/api/checkin?token=${encodeURIComponent(token)}`, {
@@ -104,8 +116,16 @@ export default function CheckinClient() {
         throw new Error(json.message || json.error || "Request failed");
       }
 
-      const statusLine = (json as any)?.status ? String((json as any).status) : "";
+            const statusLine = (json as any)?.status ? String((json as any).status) : "";
       const messageLine = (json as any)?.message ? String((json as any).message) : "";
+
+      if ((json as any)?.approved === false && (json as any)?.waiver_required) {
+        setState("done");
+        setWaiverRequired(true);
+        setWaiverSigningUrl(String((json as any)?.waiver_signing_url ?? ""));
+        setMsg(messageLine || "Waiver required before check-in.");
+        return;
+      }
 
       setState("done");
       setMsg(messageLine || statusLine || "Check-in processed.");
@@ -230,18 +250,63 @@ export default function CheckinClient() {
           </button>
         </form>
 
-        {msg ? (
+                {msg ? (
           <div
             style={{
               marginTop: 16,
               padding: 14,
               border: "1px solid #e5e7eb",
               borderRadius: 14,
-              background: "#f8fafc",
+              background: waiverRequired ? "#fff7ed" : "#f8fafc",
               fontSize: 15,
             }}
           >
-            {msg}
+            <div>{msg}</div>
+
+            {waiverRequired ? (
+              <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+                {waiverSigningUrl ? (
+                  <a
+                    href={waiverSigningUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: "inline-block",
+                      textAlign: "center",
+                      padding: "14px 16px",
+                      fontSize: 17,
+                      fontWeight: 600,
+                      borderRadius: 14,
+                      background: "#111827",
+                      color: "#ffffff",
+                      textDecoration: "none",
+                    }}
+                  >
+                    Sign Waiver Now
+                  </a>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setState("idle");
+                    setMsg("");
+                    setWaiverRequired(false);
+                    setWaiverSigningUrl("");
+                  }}
+                  style={{
+                    padding: "12px 14px",
+                    fontSize: 15,
+                    borderRadius: 12,
+                    border: "1px solid #e5e7eb",
+                    background: "#ffffff",
+                    cursor: "pointer",
+                  }}
+                >
+                  I signed it — Try Check-In Again
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
