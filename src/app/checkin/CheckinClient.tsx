@@ -75,7 +75,7 @@ export default function CheckinClient() {
     setSessionLabel(`${fmtLa(sessionStart)} (America/Los_Angeles)`);
   }, [sessionStart]);
 
-  const canSubmit = useMemo(() => {
+    const canSubmit = useMemo(() => {
     return (
       email.trim().length > 3 &&
       email.includes("@") &&
@@ -116,65 +116,135 @@ export default function CheckinClient() {
   }
 
   return (
-    <main style={{ maxWidth: 520, margin: "40px auto", padding: "0 16px" }}>
-      <h1>Check In</h1>
+    <main style={{ maxWidth: 560, margin: "40px auto", padding: "0 16px" }}>
+      <div
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 20,
+          padding: 20,
+          background: "#ffffff",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
+        }}
+      >
+        <h1 style={{ fontSize: 32, margin: 0, lineHeight: 1.1 }}>Check In</h1>
+        <p style={{ marginTop: 10, marginBottom: 0, fontSize: 18, color: "#334155" }}>
+          Enter your email to begin.
+        </p>
 
-      {missingToken ? (
-        <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e7eb", borderRadius: 12 }}>
-          <b>Missing QR token.</b>
-          <div style={{ marginTop: 6, color: "#64748b", fontSize: 13 }}>
-            Please scan the session QR code again (or ask the coordinator for help).
+        {missingToken ? (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              border: "1px solid #fecaca",
+              background: "#fff7f7",
+              borderRadius: 14,
+            }}
+          >
+            <b>Missing QR token.</b>
+            <div style={{ marginTop: 6, color: "#64748b", fontSize: 13 }}>
+              Please scan the session QR code again (or ask the coordinator for help).
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {token ? (
-        <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e7eb", borderRadius: 12 }}>
-          <div style={{ fontSize: 13, color: "#334155" }}>
-            <b>Session:</b>{" "}
-            {sessionLabel || "Loading…"}
+        {token ? (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              border: "1px solid #e5e7eb",
+              borderRadius: 14,
+              background: "#f8fafc",
+            }}
+          >
+            <div style={{ fontSize: 13, color: "#334155" }}>
+              <b>Session:</b> {sessionLabel || "Loading…"}
+            </div>
+
+            <button
+              type="button"
+              onClick={loadCurrentSession}
+              style={{
+                marginTop: 10,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #e5e7eb",
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              {refreshing ? "Refreshing..." : "Refresh session"}
+            </button>
+          </div>
+        ) : null}
+
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 14, marginTop: 20 }}>
+          <div
+            style={{
+              border: "2px solid #111827",
+              borderRadius: 18,
+              padding: 16,
+              background: "#ffffff",
+            }}
+          >
+            <label style={{ display: "block", fontSize: 15, fontWeight: 600, color: "#111827" }}>
+              Member Email
+            </label>
+            <input
+              type="email"
+              required
+              placeholder="member@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoFocus
+              style={{
+                width: "100%",
+                padding: 16,
+                marginTop: 10,
+                fontSize: 20,
+                borderRadius: 14,
+                border: "2px solid #d1d5db",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
           </div>
 
-        <button
-  type="button"
-  onClick={loadCurrentSession}
-  style={{
-    marginTop: 10,
-    padding: "8px 12px",
-    borderRadius: 10,
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    cursor: "pointer",
-  }}
->
-  {refreshing ? "Refreshing..." : "Refresh session"}
-</button>
-        </div>
-      ) : null}
+          <button
+            type="submit"
+            disabled={state === "loading" || !canSubmit}
+            style={{
+              padding: "16px 18px",
+              fontSize: 18,
+              fontWeight: 600,
+              borderRadius: 16,
+              border: "none",
+              background: state === "loading" || !canSubmit ? "#cbd5e1" : "#111827",
+              color: "#ffffff",
+              cursor: state === "loading" || !canSubmit ? "not-allowed" : "pointer",
+            }}
+          >
+            {state === "loading" ? "Checking…" : "Check In"}
+          </button>
+        </form>
 
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 10, marginTop: 16 }}>
-        <label style={{ fontSize: 13, color: "#334155" }}>
-          Member Email
-          <input
-            type="email"
-            required
-            placeholder="member@email.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: "100%", padding: 10, marginTop: 6 }}
-          />
-        </label>
-
-        <button type="submit" disabled={state === "loading" || !canSubmit} style={{ padding: "10px 14px" }}>
-          {state === "loading" ? "Checking…" : "Check In"}
-        </button>
-      </form>
-
-      {msg ? (
-        <div style={{ marginTop: 14, padding: 12, border: "1px solid #e5e7eb", borderRadius: 12 }}>
-          {msg}
-        </div>
-      ) : null}
+        {msg ? (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              border: "1px solid #e5e7eb",
+              borderRadius: 14,
+              background: "#f8fafc",
+              fontSize: 15,
+            }}
+          >
+            {msg}
+          </div>
+        ) : null}
+      </div>
     </main>
   );
 }
