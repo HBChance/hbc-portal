@@ -131,40 +131,22 @@ if (targetEmail) q = q.eq("recipient_email", targetEmail);
 const { data: rows, error: wErr } = await q;
     if (wErr) return NextResponse.json({ error: wErr.message }, { status: 400 });
 
- // Group by recipient_email and avoid checking stale docs when a signed one already exists.
-type WRow = any;
+     const candidates = (rows ?? []).filter((w: any) => {
+      const status = String(w.status ?? "").toLowerCase();
+      const docId = String(w.external_document_id ?? "").trim();
+      return status !== "signed" && !!docId;
+    });
 
-// rows are ordered by sent_at desc above (newest first)
-const grouped = new Map<string, WRow[]>();
-for (const w of rows ?? []) {
-  const em = String(w.recipient_email ?? "").toLowerCase().trim();
-  if (!em) continue;
-  const arr = grouped.get(em) ?? [];
-  arr.push(w);
-  grouped.set(em, arr);
-}
+    console.log(
+      "[waiver-check] candidates",
+      candidates.map((w: any) => ({
+        waiver_id: w.id,
+        recipient_email: w.recipient_email,
+        sent_at: w.sent_at,
+        docId: w.external_document_id,
+      }))
+    );
 
-const candidates: WRow[] = [];
-for (const [em, list] of grouped.entries()) {
-  // If ANY waiver for this email is signed, we skip checking entirely.
-  const hasSigned = list.some((x) => String(x.status ?? "").toLowerCase() === "signed");
-  if (hasSigned) continue;
-
-  // Otherwise, pick the newest non-signed waiver row (list is already newest-first)
-  const newestNonSigned = list.find((x) => String(x.status ?? "").toLowerCase() !== "signed");
-  if (newestNonSigned) candidates.push(newestNonSigned);
-}
-
-// OPTIONAL (but helpful): log which doc we chose per email
-console.log(
-  "[waiver-check] candidates",
-  candidates.map((w: any) => ({
-    waiver_id: w.id,
-    recipient_email: w.recipient_email,
-    sent_at: w.sent_at,
-    docId: w.external_document_id,
-  }))
-);
     let checked = 0;
     let marked_signed = 0;
     const errors: Array<{ waiver_id: string; error: string }> = [];

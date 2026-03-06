@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     const { data: waivers, error: wErr } = await supabase
       .from("waivers")
       .select("id,status,external_document_id,attendee_name,recipient_email,waiver_year,calendly_invitee_uri")
-      .eq("member_id", member_id)
+      .eq("recipient_email", recipient_email)
       .eq("waiver_year", WAIVER_YEAR);
 
     if (wErr) return NextResponse.json({ error: wErr.message }, { status: 400 });
