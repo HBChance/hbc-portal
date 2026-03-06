@@ -32,25 +32,88 @@ export async function POST(req: Request) {
   const sessionStartIso = body?.sessionStart ? String(body.sessionStart).trim() : null;
 
   if (!email) return json(false, { error: "email is required" }, 400);
-  if (!sessionStartIso) return json(false, { error: "sessionStart is required for admin manual check-in" }, 400);
+  
+    let sessionStart: Date | null = null;
 
-  const sessionStart = new Date(sessionStartIso);
-  if (!Number.isFinite(sessionStart.getTime())) {
-    return json(false, { error: "Invalid sessionStart ISO" }, 400);
+  if (sessionStartIso) {
+    sessionStart = new Date(sessionStartIso);
+    if (!Number.isFinite(sessionStart.getTime())) {
+      return json(false, { error: "Invalid sessionStart ISO" }, 400);
+    }
   }
 
   const supabase = createSupabaseAdminClient();
 
-  // 1) Find RSVP for that attendee + exact session
-  const { data: rsvp, error: rsvpErr } = await supabase
-    .from("rsvps")
-    .select("id, member_id, invitee_email, event_start_at")
-    .eq("event_start_at", sessionStart.toISOString())
-    .ilike("invitee_email", email) // case-insensitive match
-    .maybeSingle();
+    // 1) Find RSVP for that attendee.
+  // If sessionStart was provided, use exact match.
+  // Otherwise auto-detect the currently active session window.
+  let rsvp: any = null;
+  let rsvpErr: any = null;
+
+  if (sessionStart) {
+    const out = await supabase
+      .from("rsvps")
+      .select("id, member_id, invitee_email, event_start_at, status")
+      .eq("event_start_at", sessionStart.toISOString())
+      .ilike("invitee_email", email)
+      .eq("status", "booked")
+      .maybeSingle();
+
+    rsvp = out.data;
+    rsvpErr = out.error;
+  } else {
+    const nowMs = Date.now();
+    const windowStartIso = new Date(nowMs - 12 * 60 * 60 * 1000).toISOString();
+    const windowEndIso = new Date(nowMs + 12 * 60 * 60 * 1000).toISOString();
+
+    const out = await supabase
+      .from("rsvps")
+      .select("id, member_id, invitee_email, event_start_at, status")
+      .ilike("invitee_email", email)
+      .eq("status", "booked")
+      .gte("event_start_at", windowStartIso)
+      .lte("event_start_at", windowEndIso)
+      .order("event_start_at", { ascending: true })
+      .limit(10);
+
+    rsvpErr = out.error;
+
+    const rows = out.data ?? [];
+    const CHECKIN_OPENS_MINUTES = 60;
+    const CHECKIN_CLOSES_MINUTES = 150;
+
+    const active = rows.filter((x: any) => {
+      const startMs = Date.parse(x.event_start_at);
+      if (!Number.isFinite(startMs)) return false;
+
+      const opensAtMs = startMs - CHECKIN_OPENS_MINUTES * 60 * 1000;
+      const closesAtMs = startMs + CHECKIN_CLOSES_MINUTES * 60 * 1000;
+
+      return nowMs >= opensAtMs && nowMs <= closesAtMs;
+    });
+
+    if (active.length > 0) {
+      rsvp = active.sort(
+        (a: any, b: any) => Date.parse(a.event_start_at) - Date.parse(b.event_start_at)
+      )[0];
+    } else if (rows.length > 0) {
+      rsvp = rows.sort((a: any, b: any) => {
+        const da = Math.abs(Date.parse(a.event_start_at) - nowMs);
+        const db = Math.abs(Date.parse(b.event_start_at) - nowMs);
+        return da - db;
+      })[0];
+    }
+  }
 
   if (rsvpErr) return json(false, { error: rsvpErr.message }, 500);
-  if (!rsvp?.id) return json(false, { error: "No RSVP found for that email + sessionStart" }, 404);
+  if (!rsvp?.id) {
+    return json(false, { error: "No booked RSVP found for that attendee in the active session window" }, 404);
+  }
+
+  // If sessionStart was omitted, derive it from the matched RSVP
+  if (!sessionStart) {
+    sessionStart = new Date(rsvp.event_start_at);
+  }
 
   // 2) Idempotency: do not double-insert for same RSVP + session_start
   const { data: existing, error: exErr } = await supabase

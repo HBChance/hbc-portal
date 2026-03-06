@@ -237,17 +237,11 @@ console.log("[waiver-check] response", out);
     );
     if (!inviteeEmail) return;
 
-    const sessionStart = window.prompt(
-      "Optional: paste sessionStart ISO (leave blank to auto-pick current session):",
-      ""
-    );
-
     setBusy("manualcheckin");
-    try {
-     await postJson("/api/admin/checkin/manual", {
-  email: inviteeEmail.trim(),
-  sessionStart: sessionStart?.trim() ? sessionStart.trim() : null,
-});
+try {
+  await postJson("/api/admin/checkin/manual", {
+    email: inviteeEmail.trim(),
+  });
       setMsg("Checked in");
       window.location.reload();
     } catch (e: any) {

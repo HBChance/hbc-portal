@@ -12,6 +12,7 @@ serve(async (req) => {
 
   const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
   const EMAIL_FROM = Deno.env.get("EMAIL_FROM");
+  const FEEDBACK_FROM = Deno.env.get("FEEDBACK_FROM"); // "Happens By Chance Feedback <feedback@happensbychance.com>"
 
   if (!RESEND_API_KEY || !EMAIL_FROM) {
     return new Response(JSON.stringify({ error: "Missing RESEND_API_KEY or EMAIL_FROM" }), {
@@ -32,6 +33,14 @@ serve(async (req) => {
     });
   }
 
+  // Optional "from" override:
+  // Only allow FEEDBACK_FROM if caller requests exactly that value AND secret exists.
+  const requestedFrom = typeof payload?.from === "string" ? payload.from.trim() : "";
+  const fromFinal =
+    requestedFrom && FEEDBACK_FROM && requestedFrom === FEEDBACK_FROM
+      ? FEEDBACK_FROM
+      : EMAIL_FROM;
+
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -39,7 +48,7 @@ serve(async (req) => {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: EMAIL_FROM,
+      from: fromFinal,
       to,
       subject,
       html,
