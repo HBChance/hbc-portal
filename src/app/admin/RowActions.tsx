@@ -16,7 +16,17 @@ export function RowActions({
   type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | "manualcheckin" | "offer" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
-
+function fmtSessionChoice(iso: string) {
+    return new Date(iso).toLocaleString("en-US", {
+      timeZone: "America/Los_Angeles",
+      weekday: "short",
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
   async function postJson(url: string, body: any) {
     const res = await fetch(url, {
       method: "POST",
@@ -238,11 +248,55 @@ console.log("[waiver-check] response", out);
     if (!inviteeEmail) return;
 
     setBusy("manualcheckin");
-try {
-  await postJson("/api/admin/checkin/manual", {
-    email: inviteeEmail.trim(),
-  });
-      setMsg("Checked in");
+    try {
+      const lookup = await postJson("/api/admin/checkin/manual", {
+        email: inviteeEmail.trim(),
+        lookup: true,
+      });
+
+      const sessions = Array.isArray(lookup?.sessions) ? lookup.sessions : [];
+
+      if (sessions.length === 0) {
+        setMsg(
+          lookup?.message ||
+            "No eligible booked sessions found for this attendee. They may need to book a session or may already be checked in."
+        );
+        return;
+      }
+
+      let chosen = sessions[0];
+
+      if (sessions.length > 1) {
+        const optionsText = sessions
+          .map((s: any, i: number) => `${i + 1}. ${s.label || fmtSessionChoice(s.event_start_at)}`)
+          .join("\n");
+
+        const picked = window.prompt(
+          `Choose session for manual check-in:\n\n${optionsText}\n\nEnter the number of the session:`,
+          "1"
+        );
+
+        if (!picked) return;
+
+        const idx = Number(picked) - 1;
+        if (!Number.isInteger(idx) || idx < 0 || idx >= sessions.length) {
+          throw new Error("Invalid session selection");
+        }
+
+        chosen = sessions[idx];
+      }
+
+      const out = await postJson("/api/admin/checkin/manual", {
+        email: inviteeEmail.trim(),
+        selected_rsvp_id: chosen.rsvp_id,
+      });
+
+      if (out?.inserted === false && out?.reason === "already_checked_in") {
+        setMsg(`Already checked in — ${chosen.label || fmtSessionChoice(chosen.event_start_at)}`);
+      } else {
+        setMsg(`Checked in — ${chosen.label || fmtSessionChoice(chosen.event_start_at)}`);
+      }
+
       window.location.reload();
     } catch (e: any) {
       setMsg(e?.message || "Failed");
