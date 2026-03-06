@@ -70,6 +70,13 @@ function parseCalendly(body: any) {
     (payload?.tracking?.utm_term as string | undefined) ??
     null;
 
+  const rescheduled = Boolean(payload?.rescheduled);
+
+  const oldInviteeUri =
+    payload?.old_invitee?.uri ??
+    payload?.old_invitee?.invitee?.uri ??
+    null;
+
   return {
     eventType,
     inviteeEmail,
@@ -78,6 +85,8 @@ function parseCalendly(body: any) {
     startTime,
     endTime,
     token,
+    rescheduled,
+    oldInviteeUri,
     topKeys: Object.keys(body ?? {}),
     payloadKeys: payload ? Object.keys(payload) : [],
   };
@@ -173,6 +182,8 @@ console.log("[calendly] parsed identity", {
   token: parsed.token ?? null,
   topKeys: parsed.topKeys,
   payloadKeys: parsed.payloadKeys,
+  rescheduled: parsed.rescheduled ?? false,
+  oldInviteeUri: parsed.oldInviteeUri ?? null,
 });
 
 
@@ -220,13 +231,39 @@ const guestEmail = parsed.inviteeEmail;
         });
         return jsonResponse({ ok: true, ignored: "missing_fields_created" }, 200);
       }
-      const { data, error } = await supabase.rpc("redeem_credit_for_calendly", {
-        p_email: redeemEmail,
-        p_calendly_event_uri: parsed.calendlyEventUri,
-        p_calendly_invitee_uri: parsed.calendlyInviteeUri,
-        p_event_start_at: parsed.startTime,
-        p_event_end_at: parsed.endTime,
-      });
+      let data: any = null;
+      let error: any = null;
+
+      if (parsed.rescheduled && parsed.oldInviteeUri) {
+        const out = await supabase.rpc("reschedule_rsvp_for_calendly", {
+          p_old_calendly_invitee_uri: parsed.oldInviteeUri,
+          p_new_calendly_event_uri: parsed.calendlyEventUri,
+          p_new_calendly_invitee_uri: parsed.calendlyInviteeUri,
+          p_event_start_at: parsed.startTime,
+          p_event_end_at: parsed.endTime,
+        });
+
+        data = out.data;
+        error = out.error;
+
+        console.log("[calendly] reschedule_rsvp_for_calendly result", {
+          oldInviteeUri: parsed.oldInviteeUri,
+          newInviteeUri: parsed.calendlyInviteeUri,
+          rsvp_id: data ?? null,
+          error: error?.message ?? null,
+        });
+      } else {
+        const out = await supabase.rpc("redeem_credit_for_calendly", {
+          p_email: redeemEmail,
+          p_calendly_event_uri: parsed.calendlyEventUri,
+          p_calendly_invitee_uri: parsed.calendlyInviteeUri,
+          p_event_start_at: parsed.startTime,
+          p_event_end_at: parsed.endTime,
+        });
+
+        data = out.data;
+        error = out.error;
+      }
 
       if (error) {
         console.error("[calendly] redeem_credit_for_calendly error:", error.message);
@@ -339,8 +376,8 @@ const waiverYear = new Date().getFullYear();
           });
         }
 
-        // Important: stop here. No new waiver send.
-        return;
+        // Important: we already aliased the waiver to the new invitee URI.
+        // Continue without sending a new waiver.
       }
       // If we couldn't find old waiver, fall through and treat like a normal booking.
     }
@@ -561,7 +598,14 @@ try {
   }
 
   if (parsed.eventType === "invitee.canceled") {
-    if (!parsed.calendlyInviteeUri) {
+if (parsed.rescheduled) {
+      console.log("[calendly] canceled event is part of reschedule — skipping refund/cancel", {
+        inviteeUri: parsed.calendlyInviteeUri,
+        oldInviteeUri: parsed.oldInviteeUri ?? null,
+      });
+      return jsonResponse({ ok: true, ignored: "reschedule_cancel" }, 200);
+    }    
+if (!parsed.calendlyInviteeUri) {
       console.warn("[calendly] missing invitee uri for canceled");
       return jsonResponse({ ok: true, ignored: "missing_invitee_uri_canceled" }, 200);
     }
