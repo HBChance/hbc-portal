@@ -73,10 +73,15 @@ function parseCalendly(body: any) {
   const rescheduled = Boolean(payload?.rescheduled);
 
   const oldInviteeUri =
+    (payload?.old_invitee as string | undefined) ??
     payload?.old_invitee?.uri ??
     payload?.old_invitee?.invitee?.uri ??
     null;
-
+const newInviteeUri =
+    (payload?.new_invitee as string | undefined) ??
+    payload?.new_invitee?.uri ??
+    payload?.new_invitee?.invitee?.uri ??
+    null;
   return {
     eventType,
     inviteeEmail,
@@ -87,6 +92,7 @@ function parseCalendly(body: any) {
     token,
     rescheduled,
     oldInviteeUri,
+    newInviteeUri,
     topKeys: Object.keys(body ?? {}),
     payloadKeys: payload ? Object.keys(payload) : [],
   };
@@ -184,6 +190,7 @@ console.log("[calendly] parsed identity", {
   payloadKeys: parsed.payloadKeys,
   rescheduled: parsed.rescheduled ?? false,
   oldInviteeUri: parsed.oldInviteeUri ?? null,
+  newInviteeUri: parsed.newInviteeUri ?? null,
 });
 
 
@@ -234,7 +241,7 @@ const guestEmail = parsed.inviteeEmail;
       let data: any = null;
       let error: any = null;
 
-      if (parsed.rescheduled && parsed.oldInviteeUri) {
+      if (parsed.oldInviteeUri) {
         const out = await supabase.rpc("reschedule_rsvp_for_calendly", {
           p_old_calendly_invitee_uri: parsed.oldInviteeUri,
           p_new_calendly_event_uri: parsed.calendlyEventUri,
