@@ -339,6 +339,8 @@ const waiverYear = new Date().getFullYear();
     // Detect reschedule: Calendly includes payload.rescheduled + payload.old_invitee
     const rescheduled = Boolean(body?.payload?.rescheduled);
     const oldInviteeUri =
+      parsed.oldInviteeUri ??
+      (body?.payload?.old_invitee as string | undefined) ??
       (body?.payload?.old_invitee?.uri as string | undefined) ??
       (body?.payload?.old_invitee?.invitee?.uri as string | undefined) ??
       null;

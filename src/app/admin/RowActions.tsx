@@ -13,7 +13,7 @@ export function RowActions({
   waiverStatus?: "missing" | "sent" | "signed";
   balance?: number;
 }) {
-  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | "manualcheckin" | "offer" | null;
+  type Busy = "booking" | "waiver" | "credit" | "remind" | "checkwaiver" | "noshow" | "manualcheckin" | "offer" | "change" | null;
 const [busy, setBusy] = useState<Busy>(null);
   const [msg, setMsg] = useState<string | null>(null);
 function fmtSessionChoice(iso: string) {
@@ -345,6 +345,44 @@ console.log("[waiver-check] response", out);
   title={!email ? "Missing email" : "Send membership offer email ($33 / $66)"}
 >
   {busy === "offer" ? "Sending…" : "Send membership offer"}
+</button>
+<button
+  type="button"
+  disabled={busy !== null}
+  onClick={async () => {
+    setMsg(null);
+    setBusy("change");
+    try {
+      const out = await postJson("/api/admin/rsvp/change", {
+        member_id: memberId,
+        email: email ?? null,
+      });
+
+      const url = String(out?.reschedule_url ?? "").trim();
+      if (!url) {
+        throw new Error("No reschedule URL returned");
+      }
+
+      window.open(url, "_blank", "noopener,noreferrer");
+      setMsg("Calendly reschedule opened in a new tab");
+    } catch (e: any) {
+      setMsg(e?.message || "Failed");
+    } finally {
+      setBusy(null);
+    }
+  }}
+  style={{
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "6px 10px",
+    fontSize: 12,
+    background: "white",
+    opacity: busy !== null ? 0.5 : 1,
+    cursor: busy !== null ? "not-allowed" : "pointer",
+  }}
+  title="Open Calendly reschedule flow for this member's next booked RSVP"
+>
+  {busy === "change" ? "Opening…" : "Change RSVP"}
 </button>
       {msg ? <span style={{ fontSize: 12, color: "#64748b" }}>{msg}</span> : null}
     </div>
