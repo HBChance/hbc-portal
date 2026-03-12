@@ -593,22 +593,32 @@ export async function POST(req: Request) {
     });
   }
 
-  // Approved check-in insert (idempotent-ish: we allow multiple, but it’s okay operationally)
-  const { error: ckErr } = await supabase.from("checkins").insert({
-    rsvp_id: rsvp.id,
-    booking_id: null,
-    member_id: rsvp.member_id,
-    session_start: eventStartIso,
-    waiver_year: waiverYear,
-    waiver_verified: true,
-    entry_approved: true,
-    denied_reason: null,
-  });
+   // Idempotency: if already approved for this RSVP + session, do not insert again
+  const { data: existingApproved, error: existingApprovedErr } = await supabase
+    .from("checkins")
+    .select("id")
+    .eq("rsvp_id", rsvp.id)
+    .eq("session_start", eventStartIso)
+    .eq("entry_approved", true)
+    .limit(1);
 
-  if (ckErr) {
-    console.error("[checkin] failed to insert approved checkin", ckErr.message);
-    // Still let them in; don’t block entry on logging failure.
+  if (existingApprovedErr) {
+    console.error("[checkin] failed idempotency lookup", existingApprovedErr.message);
+    return json(false, { error: existingApprovedErr.message }, 500);
   }
+
+  if (existingApproved && existingApproved.length > 0) {
+    return json(true, {
+      approved: true,
+      status: "already checked in",
+      message: "Already checked in. Welcome.",
+      member_id: rsvp.member_id,
+      rsvp_id: rsvp.id,
+      checkin_id: existingApproved[0].id,
+    });
+  }
+
+  // Approved check-in insert
 
   // Membership offer (best-effort, never blocks check-in)
   try {
